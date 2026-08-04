@@ -1,0 +1,29 @@
+[project]
+name = "trajectory-visualizer"
+version = "0.1.0"
+description = "A focused Textual TUI for inspecting agent rollout trajectories."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "textual>=5.3.0",
+]
+
+[project.scripts]
+trajectory-viewer = "trajectory_visualizer.app:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.0",
+    "pytest-asyncio>=1.1.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/trajectory_visualizer"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
