@@ -15,6 +15,28 @@ REWARD_COMPONENT_FIELDS = {
 }
 
 
+def _reward_components(reward_misc: dict[str, Any]) -> dict[str, float]:
+    """Normalize flat legacy metrics and nested rebench diagnostics."""
+    localization = reward_misc.get("localization")
+    values = dict(localization) if isinstance(localization, dict) else {}
+    values.update(reward_misc)  # Explicit top-level metrics take precedence.
+    components = {
+        str(name): float(value)
+        for name, value in values.items()
+        if (str(name).endswith("_reward") or name in REWARD_COMPONENT_FIELDS)
+        and isinstance(value, (int, float, bool))
+    }
+    # Rebench logs three equally weighted tool components, but no aggregate.
+    tool_values = [
+        components.get("tool_json_error_reward"),
+        components.get("agent_error_event_reward", components.get("agent_error_reward")),
+        components.get("str_replace_reward", components.get("file_editor_reward")),
+    ]
+    if "tool_format_reward" not in components and all(v is not None for v in tool_values):
+        components["tool_format_reward"] = sum(tool_values) / 3
+    return components
+
+
 class TrajectoryParseError(ValueError):
     """Raised when a JSONL file cannot be interpreted as a trajectory."""
 
@@ -278,15 +300,7 @@ def load_trajectory(path: Path) -> Trajectory:
                     reward = event["reward"]
                 reward_misc = (step.get("misc") or {}).get("reward_misc") or {}
                 if isinstance(reward_misc, dict):
-                    components = {
-                        str(name): float(value)
-                        for name, value in reward_misc.items()
-                        if (
-                            str(name).endswith("_reward")
-                            or str(name) in REWARD_COMPONENT_FIELDS
-                        )
-                        and isinstance(value, (int, float, bool))
-                    }
+                    components = _reward_components(reward_misc)
                     if components:
                         reward_components = components
                 finish_message = str(event.get("finish_message") or finish_message)
@@ -296,17 +310,7 @@ def load_trajectory(path: Path) -> Trajectory:
                 reward = event.get("reward", reward)
                 reward_misc = event.get("reward_misc") or {}
                 if isinstance(reward_misc, dict):
-                    reward_components.update(
-                        {
-                            str(name): float(value)
-                            for name, value in reward_misc.items()
-                            if (
-                                str(name).endswith("_reward")
-                                or str(name) in REWARD_COMPONENT_FIELDS
-                            )
-                            and isinstance(value, (int, float, bool))
-                        }
-                    )
+                    reward_components.update(_reward_components(reward_misc))
                 finish_message = str(event.get("finish_message") or finish_message)
                 error_message = str(event.get("error_message") or error_message)
 

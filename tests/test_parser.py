@@ -270,3 +270,48 @@ def test_steps_sort_numerically_and_path_is_confined(tmp_path: Path) -> None:
     assert resolve_trajectory_path(tmp_path / "2", "sample.jsonl") == allowed
     with pytest.raises(FileNotFoundError):
         resolve_trajectory_path(tmp_path / "2", str(outside))
+
+
+@pytest.mark.parametrize("terminal_metadata", [False, True])
+def test_rebench_nested_rewards_preserve_binary_total(tmp_path, terminal_metadata):
+    path = tmp_path / "rebench.jsonl"
+    metrics = {
+        "localization": {
+            "file_f1_reward": 1.0,
+            "module_f1_reward": 0.5,
+            "entity_f1_reward": 0.0,
+            "localization_reward": 0.5,
+        },
+        "binary_reward": 0.0,
+        "composite_reward": 0.3,
+        "tool_json_error_reward": 1.0,
+        "agent_error_event_reward": 0.0,
+        "str_replace_reward": 0.5,
+    }
+    record = (
+        {"type": "trajectory_finished", "reward": 0, "reward_misc": metrics}
+        if terminal_metadata else
+        {"type": "trajectory_step_added", "step": {"misc": {"reward_misc": metrics}}}
+    )
+    write_events(path, [
+        {"type": "trajectory_created", "trajectory": {"id": "rebench"}},
+        record,
+        {"type": "trajectory_finished", "reward": 0},
+    ])
+    trajectory = load_trajectory(path)
+    assert trajectory.reward == 0
+    assert trajectory.reward_components["file_f1_reward"] == 1.0
+    assert trajectory.reward_components["module_f1_reward"] == 0.5
+    assert trajectory.reward_components["entity_f1_reward"] == 0.0
+    assert trajectory.reward_components["tool_json_error_reward"] == 1.0
+    assert trajectory.reward_components["tool_format_reward"] == 0.5
+
+
+def test_explicit_tool_aggregate_is_preserved():
+    from trajectory_visualizer.parser import _reward_components
+    assert _reward_components({
+        "tool_format_reward": 0.2,
+        "tool_json_error_reward": 1.0,
+        "agent_error_event_reward": 1.0,
+        "str_replace_reward": 1.0,
+    })["tool_format_reward"] == 0.2

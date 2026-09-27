@@ -87,6 +87,7 @@ REWARD_HIERARCHY = (
         "TOOL FORMAT",
         "tool_format_reward",
         (
+            ("JSON formatting", ("tool_json_error_reward",), False),
             (
                 "str replace",
                 ("str_replace_reward", "file_editor_reward"),
@@ -294,7 +295,7 @@ def _average_reward_components(
 
 
 def _all_files_reward_text(
-    rows: list[tuple[Path, tuple[object, ...]]],
+    rows: list[tuple[Path, tuple[object, ...]]], group_size: int = 8,
 ) -> Text:
     average = _average_reward(rows)
     components = _average_reward_components(rows)
@@ -309,6 +310,18 @@ def _all_files_reward_text(
     )
     summary.append(
         f"  ({rewarded_count}/{len(rows)} rewarded)\n", style="dim"
+    )
+    groups: dict[str, list[tuple[object, ...]]] = {}
+    for path, metadata in rows:
+        groups.setdefault(_rollout_group(path), []).append(metadata)
+    completed_groups = sum(
+        len(members) >= group_size
+        and all(len(member) > 5 and member[5] for member in members)
+        for members in groups.values()
+    )
+    summary.append(
+        f"COMPLETED GROUPS  {completed_groups}/{len(groups)}"
+        f"  (expected {group_size} rollouts/group)\n", style="bold orange3"
     )
     shown_aggregates = 0
     for header, aggregate_key, breakdown in REWARD_HIERARCHY:
@@ -428,7 +441,7 @@ class TrajectoryApp(App[None]):
         color: #cbd5e1;
     }
     #reward-summary {
-        height: 6;
+        height: auto;
         padding: 0 1;
         border: solid #f59e0b;
         background: #111827;
@@ -482,9 +495,11 @@ class TrajectoryApp(App[None]):
         initial_file: Path | None = None,
         observation_limit: int = 500,
         refresh_interval: float = DEFAULT_REFRESH_INTERVAL,
+        group_size: int = 8,
     ) -> None:
         super().__init__()
         self.root = root
+        self.group_size = group_size
         self.initial_step = initial_step
         self.initial_file = initial_file
         self.observation_limit = observation_limit
@@ -662,9 +677,10 @@ class TrajectoryApp(App[None]):
                 trajectory.action_count,
                 path.name,
                 trajectory.reward_components if trajectory.is_finished else {},
+                trajectory.is_finished,
             )
         except (TrajectoryParseError, OSError) as exc:
-            return ("?", "PARSE", 0, f"{path.name} ({exc})", {})
+            return ("?", "PARSE", 0, f"{path.name} ({exc})", {}, False)
 
     @classmethod
     def _sorted_step_rows(
@@ -720,7 +736,7 @@ class TrajectoryApp(App[None]):
         self.files = [path for path, _ in rows]
         table = self.query_one("#trajectories", DataTable)
         self.query_one("#reward-summary", Static).update(
-            _all_files_reward_text(rows)
+            _all_files_reward_text(rows, self.group_size)
         )
         self.table_row_by_file_index.clear()
         group_rows: dict[str, list[tuple[Path, tuple[object, ...]]]] = {}
@@ -757,7 +773,7 @@ class TrajectoryApp(App[None]):
                     Text(
                         f"avg total {average_label}"
                         + (
-                            f" · {_format_reward_components(average_components)}"
+                            " · " + _format_reward_components(average_components).replace("\n", " | ")
                             if average_components
                             else ""
                         ),
@@ -766,7 +782,7 @@ class TrajectoryApp(App[None]):
                     key=f"group:{group_number}",
                 )
 
-            reward, error, actions, filename, reward_components = row
+            reward, error, actions, filename, reward_components = row[:5]
             self.table_row_by_file_index[index] = table.row_count
             table.add_row(
                 str(index + 1),
@@ -776,7 +792,7 @@ class TrajectoryApp(App[None]):
                 str(filename),
                 _format_reward_components(
                     reward_components, include_breakdown=False
-                ),
+                ).replace("\n", " | "),
                 key=f"trajectory:{index}",
             )
         self._set_loading(False)
@@ -1141,6 +1157,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_ROOT,
         help="Training rollout root containing numeric step directories.",
     )
+    parser.add_argument("--group-size", type=int, default=8,
+                        help="Expected rollouts per completed group (default: 8).")
     parser.add_argument("--step", type=int, help="Training step to select initially.")
     parser.add_argument(
         "--file",
@@ -1168,6 +1186,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
+    if args.group_size < 1:
+        raise SystemExit("--group-size must be at least 1")
     if args.refresh_interval < 0:
         raise SystemExit("--refresh-interval must be zero or greater")
     root = args.root.expanduser().resolve()
@@ -1183,6 +1203,7 @@ def main() -> None:
         initial_file=initial_file,
         observation_limit=args.observation_limit,
         refresh_interval=args.refresh_interval,
+        group_size=args.group_size,
     ).run()
 
 

@@ -18,8 +18,15 @@ When reward metadata is available, the final column also shows the individual
 reward components, F2P pass fraction, and P2P fail fraction for each rollout and
 their per-group averages. The breakdown is grouped under unit tests,
 localization, and tool-format rewards. Totals and parent rewards use two decimal places; child
-metrics use three. File-list rows show only the three parent rewards; opening a
-trajectory shows its full child breakdown.
+metrics use three. File-list rows show the three parent rewards; the summary box and trajectory
+details show the full child breakdown, including all tool-format components.
+Nested rebench localization metrics are supported. Tool format includes JSON
+formatting, agent-error, and file-editor scores; when no aggregate is logged,
+the viewer displays their mean. The total remains the recorded training reward,
+so binary-reward runs can still show nonzero dense diagnostics.
+The summary also counts groups whose expected rollouts have all finished.
+Use `--group-size N` to set the expected rollout count (default: 8); groups with
+missing files or unfinished rollouts do not count as complete.
 An orange summary panel above the file list shows the all-file average total,
 parent rewards, and individual child metrics for the selected training step.
 The total average uses every finished rollout with a finite numeric reward as

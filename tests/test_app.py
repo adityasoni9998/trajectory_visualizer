@@ -238,6 +238,7 @@ async def test_group_separator_shows_average_total_reward(tmp_path: Path) -> Non
                                 "file_editor_reward": reward,
                                 "agent_error_event_reward": 1.0,
                                 "tool_format_reward": 0.2,
+                                "tool_json_error_reward": 1.0,
                                 "evaluation_logs": "not a reward",
                             }
                         }
@@ -289,6 +290,14 @@ async def test_group_separator_shows_average_total_reward(tmp_path: Path) -> Non
         assert "UNIT TESTS 0.75" in highest_reward_row
         assert "LOCALIZATION 0.75" in highest_reward_row
         assert "TOOL FORMAT 0.20" in highest_reward_row
+        assert "JSON formatting 1.000" in reward_summary
+        assert "JSON formatting" not in highest_reward_row
+        assert "str replace" not in highest_reward_row
+        assert "agent error" not in highest_reward_row
+        assert table.rows[table.coordinate_to_cell_key((1, 0)).row_key].height == 1
+        assert table.rows[table.coordinate_to_cell_key((0, 0)).row_key].height == 1
+        # All five summary lines must fit inside the border, including tools.
+        assert app.query_one("#reward-summary", Static).content_size.height >= 5
         assert "binary" not in highest_reward_row
 
         await pilot.press("enter")
@@ -488,7 +497,8 @@ async def test_repeated_finish_action_collapses_into_final_message(
         rendered = "\n".join(line.text for line in timeline.lines)
 
         assert "FINAL MESSAGE" in rendered
-        assert rendered.index("REWARD  1") > rendered.index(message)
+        assert rendered.index("TOTAL REWARD") > rendered.index(message)
+        assert "1.00" in rendered[rendered.index("TOTAL REWARD"):]
         assert "FinishAction" not in rendered
 
 
@@ -526,3 +536,39 @@ async def test_provisional_reward_is_hidden_until_trajectory_finishes(
 
         assert "provisional message" in rendered
         assert "REWARD" not in rendered
+
+
+def test_completed_groups_require_all_expected_rollouts(tmp_path):
+    from trajectory_visualizer.app import _all_files_reward_text
+    from uuid import uuid4
+
+    rows = []
+    for group, finished in (
+        ("complete", [True] * 8),
+        ("active", [True] * 7 + [False]),
+        ("not_all_created", [True] * 7),
+    ):
+        for done in finished:
+            path = tmp_path / f"events_{group}_{uuid4()}.jsonl"
+            rows.append((path, (0.0 if done else None, "", 1, path.name, {}, done)))
+    assert "COMPLETED GROUPS  1/3" in _all_files_reward_text(rows).plain
+    assert "COMPLETED GROUPS  2/3" in _all_files_reward_text(rows, group_size=7).plain
+
+
+def test_json_tool_reward_in_summary_and_detail():
+    from trajectory_visualizer.app import _all_files_reward_text, _format_reward_components
+    from trajectory_visualizer.parser import _reward_components
+    components = _reward_components({
+        "tool_json_error_reward": 1.0,
+        "agent_error_event_reward": 0.0,
+        "str_replace_reward": 0.5,
+        "localization": {"file_f1_reward": 1.0, "module_f1_reward": 0.5, "entity_f1_reward": 0.0},
+    })
+    summary = _all_files_reward_text([(Path('sample.jsonl'), (0, '', 1, 'sample', components, True))]).plain
+    detail = _format_reward_components(components)
+    for text in (summary, detail):
+        assert "JSON formatting 1.000" in text
+        assert "file f1 1.000" in text
+        assert "function f1 0.000" in text
+        assert "module f1 0.500" in text
+    assert components['tool_format_reward'] == 0.5
