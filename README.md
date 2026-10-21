@@ -115,6 +115,95 @@ loads full trajectories only when selected. There are no runtime dependencies
 beyond those already used by the repository, no frontend build, and no external
 assets or services. Rollout files and the training codebase are never modified.
 
+## Use from another repository or Python program
+
+Requires Python 3.11 or newer. From a neighboring checkout such as
+`hyperion_ppo2`, install this checkout into that project's active environment:
+
+```bash
+uv pip install -e ../trajectory_visualizer
+trajectory-viewer-web /path/to/rollouts/train --port 9099
+```
+
+An editable install uses changes from this checkout directly. This command does
+not add a dependency to the consuming project's manifest; a later environment
+sync may remove it. To record a persistent local dependency with uv instead, use
+`uv add --editable ../trajectory_visualizer` (which edits that project's manifest
+and lockfile). Neither approach requires copying the viewer's source or assets.
+
+To run the viewer from any directory using its own environment, without installing
+it into the training environment:
+
+```bash
+uv run --project /path/to/trajectory_visualizer trajectory-viewer-web /path/to/rollouts/train --port 9099
+```
+
+The parser and HTTP server can also be imported independently:
+
+```python
+from pathlib import Path
+from trajectory_visualizer.parser import load_trajectory
+from trajectory_visualizer.web import make_server
+
+trajectory = load_trajectory(Path('/path/to/rollouts/train/0/events/rollout.jsonl'))
+for turn in trajectory.turns:
+    print(turn.index, turn.reward, turn.reward_info)
+
+server = make_server(Path('/path/to/rollouts/train'), host='127.0.0.1', port=9099)
+try:
+    server.serve_forever()  # Blocks until interrupted; normally run in a separate process.
+except KeyboardInterrupt:
+    pass
+finally:
+    server.server_close()
+```
+
+`make_server` returns a standard-library `ThreadingHTTPServer`, not a FastAPI/ASGI
+application. For background-thread use, call `shutdown()` from another thread
+before `server_close()`. There is no automatic server startup when importing the
+package. HTML/CSS/JavaScript assets are bundled with the package. These module
+functions are usable today, but there is not yet a separately versioned, stable
+library API; pin a commit or package version for reproducible integration.
+
+## Log contract and configuration
+
+The viewer is generic about reward keys and task counts, but expects the existing
+trajectory-event JSONL schema, with one trajectory per file. A training root has
+`<numeric training step>/events/*.jsonl`; a single step or its `events` directory
+can also be supplied directly.
+
+| Event / field | Meaning in the viewer |
+|---|---|
+| `trajectory_created.trajectory.id` | Trajectory identifier |
+| `trajectory_task_set.task.id` | HTML task-group identifier; older logs fall back to the filename prefix |
+| `trajectory_task_set.task.goal` or `.description` | Task instruction |
+| `trajectory_step_added.step_index` | Recorded step index |
+| `trajectory_step_added.step.reward` | Aggregate reward for this step, used by the bars and signed labels |
+| `trajectory_step_added.reward` | Recorded cumulative reward |
+| `trajectory_step_added.step.misc.reward_misc` | Arbitrary nested reward-info dictionary; no configured key list |
+| `trajectory_step_added.step.action_events` / `.observation_events` | Tool events, paired by `tool_call_id` when present |
+| `trajectory_finished.reward` | Recorded final reward |
+| `trajectory_finished.reward_misc` | Optional final reward-info dictionary |
+
+Event names above refer to the event's `type`; the remainder is the field path
+inside that event. A parseable trajectory needs an identifier or at least one
+recorded step. Missing rewards remain unknown, and reward-info values are never
+assumed to sum to the aggregate reward. Additional reward keys require no viewer
+edits; a different event schema requires a parser adapter.
+
+The HTML viewer has no expected group size or fixed rollout count. For example,
+512 distinct task IDs with one finished rollout each produce 512 task groups,
+each with reward variance zero. Repeated task IDs are grouped together regardless
+of the training algorithm's group-size setting. No plugin-specific paths, reward
+names, or reward weights are configured in the HTML viewer. Its root is required;
+host and port are command-line options. Presentation defaults such as truncation
+length and refresh interval currently live in the frontend code.
+
+The older TUI still has a legacy machine-specific fallback root when no path is
+passed, and defaults to `--group-size 8` for its completion counter. Pass a root
+explicitly and `--group-size 1` when appropriate; these defaults do not affect
+the HTML viewer or parser imports.
+
 ## Terminal viewer
 
 ```bash
