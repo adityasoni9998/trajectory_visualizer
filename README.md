@@ -86,6 +86,13 @@ The HTML view provides:
 - Searchable task groups, sorted by highest/lowest average reward, highest reward
   variance, random order (with a reshuffle button), or task ID. Grouping uses the logged `task.id`, falling back to filename prefixes
   when older logs omit it. Rollouts within each group sort by recorded final reward.
+- A **Turns** count of distinct LLM completions, identified by
+  `step.misc.action_misc.completion_id`. Multiple tools or step records with the
+  same completion ID count once; a completion without tools still counts.
+  Observation-only and reward-only steps without an ID do not add turns.
+  Logs without completion IDs show **—**, with no tool-specific guessing.
+  Only recorded IDs can be counted: producers must log every completion for a
+  complete count. The timeline still retains all recorded steps and rewards.
 - A trajectory timeline with **aggregate step reward and cumulative reward always
   visible**. The reward chart lets you jump directly to a step. Positive bars are green,
   negative bars red, and nonzero bars display signed step-reward labels. Rewards are taken
@@ -178,6 +185,7 @@ can also be supplied directly.
 | `trajectory_task_set.task.id` | HTML task-group identifier; older logs fall back to the filename prefix |
 | `trajectory_task_set.task.goal` or `.description` | Task instruction |
 | `trajectory_step_added.step_index` | Recorded step index |
+| `trajectory_step_added.step.misc.action_misc.completion_id` | Nonempty string identifying an LLM completion; distinct IDs determine Turns, independent of agent/tool type |
 | `trajectory_step_added.step.reward` | Aggregate reward for this step, used by the bars and signed labels |
 | `trajectory_step_added.reward` | Recorded cumulative reward |
 | `trajectory_step_added.step.misc.reward_misc` | Arbitrary nested reward-info dictionary; no configured key list |

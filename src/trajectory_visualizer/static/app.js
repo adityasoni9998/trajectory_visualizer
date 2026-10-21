@@ -309,7 +309,7 @@ function renderGroups() {
           el(
             "div",
             "rollout-sub",
-            `${row.turn_count} steps · ${row.error ? "error" : row.is_finished ? "finished" : "running"}`,
+            `${row.turn_count ?? "—"} ${row.turn_count === 1 ? "turn" : "turns"} · ${row.error ? "error" : row.is_finished ? "finished" : "running"}`,
           ),
         );
         rollout.append(
@@ -594,10 +594,12 @@ function renderTrajectory(data, keepScroll = false) {
       format(data.reward),
       `reward ${color(data.reward)}`,
     ],
-    ["RECORDED STEPS", data.turns.length, ""],
-    ["ACTIONS", data.turns.reduce((n, turn) => n + turn.actions.length, 0), ""],
+    ["TURNS", data.turn_count ?? "—", ""],
   ]) {
     const stat = el("div");
+    if (label === "TURNS")
+      stat.title =
+        "Distinct recorded LLM completion IDs; unavailable when completion metadata is absent";
     stat.append(
       el("span", "stat-label", label),
       el("span", `stat-value ${className}`, value),

@@ -34,6 +34,7 @@ class Turn:
     reward: float | int | bool | None = None
     cumulative_reward: float | int | bool | None = None
     reward_info: dict[str, Any] = field(default_factory=dict)
+    completion_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -50,6 +51,16 @@ class Trajectory:
     parse_warnings: list[str] = field(default_factory=list)
     terminal_reward_info: dict[str, Any] = field(default_factory=dict)
     task_id: str = ""
+
+    @property
+    def completion_count(self) -> int | None:
+        """Count distinct recorded LLM completions, independent of tool/agent types.
+
+        Without completion metadata, action/step counts cannot establish how
+        many LLM calls occurred. Return unknown rather than infer from tools.
+        """
+        ids = {turn.completion_id for turn in self.turns if turn.completion_id}
+        return len(ids) if ids else None
 
     @property
     def action_count(self) -> int:

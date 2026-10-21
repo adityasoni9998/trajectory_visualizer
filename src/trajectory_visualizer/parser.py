@@ -315,6 +315,14 @@ def load_trajectory(path: Path, *, sum_metrics: tuple[str, ...] = ()) -> Traject
                 misc = step.get("misc")
                 reward_misc = misc.get("reward_misc") if isinstance(misc, dict) else None
                 reward_misc = reward_misc if isinstance(reward_misc, dict) else {}
+                action_misc = misc.get("action_misc") if isinstance(misc, dict) else None
+                completion_id = (
+                    action_misc.get("completion_id")
+                    if isinstance(action_misc, dict)
+                    else None
+                )
+                if not isinstance(completion_id, str) or not completion_id.strip():
+                    completion_id = None
                 actions, unmatched = _pair_events(
                     _event_list(step.get("action_events"), "action_events"),
                     _event_list(step.get("observation_events"), "observation_events"),
@@ -329,6 +337,7 @@ def load_trajectory(path: Path, *, sum_metrics: tuple[str, ...] = ()) -> Traject
                         reward=step.get("reward"),
                         cumulative_reward=event.get("reward"),
                         reward_info=reward_misc,
+                        completion_id=completion_id,
                     )
                 )
                 if event.get("reward") is not None:

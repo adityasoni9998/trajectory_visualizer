@@ -315,3 +315,48 @@ def test_explicit_tool_aggregate_is_preserved():
         "agent_error_event_reward": 1.0,
         "str_replace_reward": 1.0,
     })["tool_format_reward"] == 0.2
+
+
+def test_completion_count_is_independent_of_tools_and_step_records(tmp_path):
+    path = tmp_path / "completions.jsonl"
+    steps = [
+        {"observation_events": [{"observation": {"content": "Initial prompt"}}]},
+        {
+            "misc": {"action_misc": {"completion_id": "first"}},
+            "action_events": [
+                {"tool_name": "search", "tool_call_id": "a"},
+                {"tool_name": "calculator", "tool_call_id": "b"},
+            ],
+        },
+        # The same completion may be represented by multiple records.
+        {"misc": {"action_misc": {"completion_id": "first"}}},
+        # A completion need not call a tool to count (e.g. a final text answer).
+        {"misc": {"action_misc": {"completion_id": "second"}}},
+        {"reward": -0.05, "misc": {"reward_misc": {"penalty": -0.05}}},
+    ]
+    write_events(path, [
+        {"type": "trajectory_step_added", "step_index": index, "step": step}
+        for index, step in enumerate(steps)
+    ])
+    trajectory = load_trajectory(path)
+    assert trajectory.completion_count == 2
+    assert len(trajectory.turns) == 5
+    assert trajectory.turns[1].completion_id == "first"
+    assert trajectory.turns[4].reward == -0.05
+    from trajectory_visualizer.web import trajectory_data
+    data = trajectory_data(trajectory)
+    assert data["turn_count"] == 2
+    assert data["step_count"] == 5
+    assert data["turns"][3]["completion_id"] == "second"
+
+
+@pytest.mark.parametrize("action_misc", [None, [], {}, {"completion_id": None},
+    {"completion_id": ""}, {"completion_id": " "}, {"completion_id": True}])
+def test_completion_count_does_not_guess_from_actions(tmp_path, action_misc):
+    path = tmp_path / "missing-completions.jsonl"
+    write_events(path, [{
+        "type": "trajectory_step_added",
+        "step": {"misc": {"action_misc": action_misc},
+                 "action_events": [{"tool_name": "custom-tool"}]},
+    }])
+    assert load_trajectory(path).completion_count is None

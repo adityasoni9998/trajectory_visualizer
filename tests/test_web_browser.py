@@ -45,6 +45,7 @@ def write_sample(root: Path, step: int, file: str, task: str, reward: float = 0.
                     }
                 ],
                 "misc": {
+                    "action_misc": {"completion_id": "completion-1"},
                     "reward_misc": {
                         "nested": {
                             "score": 0.7,
@@ -95,6 +96,9 @@ def browser_view(tmp_path):
 def test_grouping_rewards_expansions_and_navigation(browser_view):
     page, root, errors = browser_view
     expect = playwright.expect
+    expect(page.locator(".headline-stats")).to_contain_text("TURNS1")
+    expect(page.locator(".headline-stats")).not_to_contain_text("ACTIONS")
+    expect(page.locator(".rollout-sub").first).to_contain_text("1 turn")
     expect(page.locator(".group-button")).to_have_count(1)
     expect(page.locator(".rollout")).to_have_count(2)
     expect(page.locator(".group-meta")).to_have_text("2 rollouts · 2 finished")

@@ -66,6 +66,8 @@ def trajectory_data(trajectory: Trajectory) -> dict[str, Any]:
         "file": trajectory.path.name,
         "trajectory_id": trajectory.trajectory_id,
         "task_id": task_id(trajectory),
+        "turn_count": trajectory.completion_count,
+        "step_count": len(trajectory.turns),
         "task": trajectory.task,
         "reward": finite_number(trajectory.reward),
         "is_finished": trajectory.is_finished,
@@ -77,6 +79,7 @@ def trajectory_data(trajectory: Trajectory) -> dict[str, Any]:
         "turns": [
             {
                 "index": turn.index,
+                "completion_id": turn.completion_id,
                 "reward": finite_number(turn.reward),
                 "cumulative_reward": finite_number(turn.cumulative_reward),
                 "reward_info": turn.reward_info,
@@ -148,7 +151,8 @@ class RolloutStore:
                 if trajectory.is_finished
                 else None,
                 "is_finished": trajectory.is_finished,
-                "turn_count": len(trajectory.turns),
+                "turn_count": trajectory.completion_count,
+                "step_count": len(trajectory.turns),
                 "action_count": trajectory.action_count,
                 "error": trajectory.error_message,
                 "warning_count": len(trajectory.parse_warnings),
@@ -160,7 +164,8 @@ class RolloutStore:
                 "trajectory_id": "",
                 "reward": None,
                 "is_finished": False,
-                "turn_count": 0,
+                "turn_count": None,
+                "step_count": 0,
                 "action_count": 0,
                 "error": str(exc),
                 "warning_count": 1,
