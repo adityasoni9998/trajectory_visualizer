@@ -438,10 +438,7 @@ function rewardInfo(
 }
 
 function eventBlock(label, tool, text, key, isError = false, callId = null) {
-  const event = el(
-    "section",
-    `event ${label === "OBSERVATION" ? "observation-event" : "action-event"}`,
-  );
+  const event = el("section", `event ${label.toLowerCase()}-event`);
   const heading = el("div", "event-heading");
   heading.append(
     el(
@@ -658,6 +655,15 @@ function renderTrajectory(data, keepScroll = false) {
     card.append(heading);
     const body = el("div", "turn-body");
     turn.actions.forEach((action, index) => {
+      if (action.thought)
+        body.append(
+          eventBlock(
+            "THOUGHT",
+            "agent",
+            action.thought,
+            `${key}:a:${index}:thought`,
+          ),
+        );
       body.append(
         eventBlock(
           "ACTION",

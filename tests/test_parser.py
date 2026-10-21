@@ -360,3 +360,29 @@ def test_completion_count_does_not_guess_from_actions(tmp_path, action_misc):
                  "action_events": [{"tool_name": "custom-tool"}]},
     }])
     assert load_trajectory(path).completion_count is None
+
+
+@pytest.mark.parametrize(("thought", "expected"), [
+    ("Compare the outputs first.", "Compare the outputs first."),
+    ([{"type": "text", "text": "First line"}, {"text": "Second line"}], "First line\nSecond line"),
+    ({"content": [{"text": "Nested text"}]}, "Nested text"),
+    (None, ""), ([], ""), ({}, ""), ([{"text": "  "}], ""),
+])
+def test_generic_action_thought_is_preserved(tmp_path, thought, expected):
+    from trajectory_visualizer.web import trajectory_data
+    path = tmp_path / "thought.jsonl"
+    write_events(path, [{
+        "type": "trajectory_step_added",
+        "step": {"action_events": [{
+            "tool_name": "custom-tool",
+            "tool_call": {"name": "custom-tool", "arguments": {"query": "example"}},
+            "thought": thought,
+            "reasoning_content": "Do not display this reasoning field",
+            "thinking_blocks": [{"text": "Do not display these blocks"}],
+        }]},
+    }])
+    trajectory = load_trajectory(path)
+    assert trajectory.turns[0].actions[0].thought == expected
+    action = trajectory_data(trajectory)["turns"][0]["actions"][0]
+    assert action["thought"] == expected
+    assert "Do not display" not in json.dumps(action)

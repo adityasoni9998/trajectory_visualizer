@@ -263,3 +263,30 @@ def test_reward_chart_labels_and_readable_event_colors(browser_view):
     expect(page.locator(".bar")).to_have_count(3)
     expect(page.locator(".chart-value")).to_have_count(2)
     assert not errors
+
+
+def test_thought_precedes_action_and_expands_safely(browser_view):
+    page, root, errors = browser_view
+    expect = playwright.expect
+    expect(page.locator('.thought-event')).to_have_count(0)
+    path = root / '0/events/arbitrary-a.jsonl'
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    action = records[2]['step']['action_events'][0]
+    action['thought'] = [{'type': 'text', 'text': '<img src=x onerror="window.pwned=1">\n' + 'Inspect the result first.\n' * 60 + 'THOUGHT_END'}]
+    action['reasoning_content'] = 'UNUSED_REASONING'
+    action['thinking_blocks'] = [{'text': 'UNUSED_THINKING'}]
+    path.write_text(''.join(json.dumps(record) + '\n' for record in records))
+    page.get_by_role('button', name='Refresh', exact=False).click()
+    thought = page.locator('.thought-event')
+    expect(thought).to_have_count(1)
+    expect(page.locator('#turn-0 .event').first).to_have_class('event thought-event')
+    expect(thought.locator('pre')).not_to_contain_text('THOUGHT_END')
+    thought.get_by_role('button', name='Show all', exact=True).click()
+    expect(thought.locator('pre')).to_contain_text('THOUGHT_END')
+    expect(thought.locator('img')).to_have_count(0)
+    assert page.evaluate('window.pwned') is None
+    expect(page.locator('#trajectory')).not_to_contain_text('UNUSED_REASONING')
+    expect(page.locator('#trajectory')).not_to_contain_text('UNUSED_THINKING')
+    thought.get_by_role('button', name='Show less', exact=True).click()
+    expect(thought.locator('pre')).not_to_contain_text('THOUGHT_END')
+    assert not errors

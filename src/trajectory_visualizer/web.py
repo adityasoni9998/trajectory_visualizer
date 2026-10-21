@@ -89,6 +89,7 @@ def trajectory_data(trajectory: Trajectory) -> dict[str, Any]:
                         "kind": action.kind,
                         "summary": action.summary,
                         "detail": action.detail,
+                        "thought": action.thought,
                         "tool_call_id": action.tool_call_id,
                         "observations": [
                             observation_data(item) for item in action.observations

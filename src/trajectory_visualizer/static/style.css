@@ -1074,3 +1074,15 @@ main {
 .bar:not(.positive):not(.negative) {
   fill: #8490a4;
 }
+
+.thought-event > .text-block {
+  background: #f3efff;
+  border-color: #ddd3f5;
+}
+.thought-event .event-label {
+  background: #e9e0fc;
+  color: #58418c;
+}
+.thought-event .expand-text:hover {
+  background: #e9e0fc;
+}

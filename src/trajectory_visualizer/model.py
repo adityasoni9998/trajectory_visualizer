@@ -24,6 +24,7 @@ class Action:
     path: str | None
     raw: dict[str, Any]
     observations: list[Observation] = field(default_factory=list)
+    thought: str = ""
 
 
 @dataclass(slots=True)

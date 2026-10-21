@@ -146,6 +146,17 @@ def _compact_command(command: str) -> str:
     return first_line
 
 
+def _thought_text(value: Any) -> str:
+    """Read only explicitly logged thought text, independent of action kind."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return "\n".join(text for item in value if (text := _thought_text(item)).strip())
+    if isinstance(value, dict):
+        return _thought_text(value.get("text") or value.get("content"))
+    return ""
+
+
 def _action(event: dict[str, Any]) -> Action:
     body_value = event.get("action")
     body = body_value if isinstance(body_value, dict) else {}
@@ -227,6 +238,7 @@ def _action(event: dict[str, Any]) -> Action:
         detail=detail,
         path=str(path) if path else None,
         raw=event,
+        thought=_thought_text(event.get("thought")).strip(),
     )
 
 

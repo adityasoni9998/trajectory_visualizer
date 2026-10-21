@@ -100,6 +100,10 @@ The HTML view provides:
 - Collapsed reward-info dictionaries. Expand any nested dictionary or array;
   unfamiliar keys work without configuration. Last-observed numeric diagnostics
   and terminal reward info are available in separate collapsed sections.
+- Logged `thought` text appears in a light-purple block before its action, with
+  the same truncation and **Show all** control. Strings and text/content blocks
+  are supported for any action type. Empty thoughts are omitted;
+  `reasoning_content` and `thinking_blocks` are not displayed.
 - Light-blue actions paired with light-yellow observations, including parallel tool calls and
   unmatched observations. Long text starts truncated to 10 lines / 700 characters;
   **Show all** and **Show less** toggle the complete text independently.
