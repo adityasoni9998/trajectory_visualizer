@@ -154,3 +154,104 @@ def test_mobile_layout_has_no_horizontal_overflow(browser_view):
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
     assert page.locator("#main").bounding_box()["height"] > 250
     assert not errors
+
+
+def test_sidebar_resize_collapse_and_persistence(browser_view):
+    page, _, errors = browser_view
+    expect = playwright.expect
+    for pane in ("steps", "tasks"):
+        sidebar = page.locator(f"#{pane}-pane")
+        handle = page.locator(f"#resize-{pane}")
+        original = sidebar.bounding_box()["width"]
+        box = handle.bounding_box()
+        page.mouse.move(box["x"] + box["width"] / 2, box["y"] + 100)
+        page.mouse.down()
+        page.mouse.move(box["x"] + box["width"] / 2 + 50, box["y"] + 100)
+        page.mouse.up()
+        assert sidebar.bounding_box()["width"] == pytest.approx(original + 50)
+        handle.focus()
+        page.keyboard.press("ArrowRight")
+        assert sidebar.bounding_box()["width"] == pytest.approx(original + 60)
+        page.locator(f"#toggle-{pane}").click()
+        expect(sidebar).to_be_hidden()
+    page.reload()
+    expect(page.locator(".trajectory-header h1")).to_be_visible()
+    expect(page.locator("#steps-pane")).to_be_hidden()
+    expect(page.locator("#tasks-pane")).to_be_hidden()
+    for pane, width in (("steps", 240), ("tasks", 420)):
+        page.locator(f"#toggle-{pane}").click()
+        assert page.locator(f"#{pane}-pane").bounding_box()["width"] == width
+    page.set_viewport_size({"width": 390, "height": 844})
+    before = page.locator("#main").bounding_box()["height"]
+    page.locator("#toggle-tasks").click()
+    assert page.locator("#main").bounding_box()["height"] > before + 100
+    assert not errors
+
+
+def test_task_sorting_and_stable_random_order(browser_view):
+    page, root, errors = browser_view
+    expect = playwright.expect
+    for task, rewards in (
+        ("low", [-0.8, -0.7]),
+        ("high", [0.8, 0.9]),
+        ("volatile", [-1, 1]),
+    ):
+        for index, reward in enumerate(rewards):
+            write_sample(root, 0, f"{task}-{index}.jsonl", task, reward)
+    missing = root / "0/events/missing.jsonl"
+    missing.write_text(
+        json.dumps({"type": "trajectory_task_set", "task": {"id": "missing"}}) + "\n"
+    )
+    page.get_by_role("button", name="Refresh", exact=False).click()
+    expect(page.locator(".group-button")).to_have_count(5)
+    for sort, first in (
+        ("reward", "high"),
+        ("lowest", "low"),
+        ("variance", "volatile"),
+    ):
+        page.locator("#sort").select_option(sort)
+        expect(page.locator(".group-name").first).to_contain_text(first)
+        expect(page.locator(".group-name").last).to_contain_text("missing")
+    expect(page.locator(".group-variance").first).to_have_text("var 1.000")
+    page.evaluate(
+        "Math.random = (() => {let seed = 23; return () => ((seed = (seed * 16807) % 2147483647) / 2147483647);})()"
+    )
+    page.locator("#sort").select_option("random")
+    order = page.locator(".group-name").all_text_contents()
+    page.locator(".group-button").first.click()
+    assert page.locator(".group-name").all_text_contents() == order
+    page.locator("#reshuffle").click()
+    shuffled = page.locator(".group-name").all_text_contents()
+    assert sorted(shuffled) == sorted(order)
+    assert shuffled != order
+    assert not errors
+
+
+def test_reward_chart_labels_and_readable_event_colors(browser_view):
+    page, _, errors = browser_view
+    expect = playwright.expect
+    expect(page.locator(".chart-value.positive")).to_have_text("+0.200")
+    expect(page.locator(".chart-value.negative")).to_have_text("-0.050")
+    expect(page.locator(".bar.positive")).to_have_css("fill", "rgb(8, 100, 61)")
+    expect(page.locator(".bar.negative")).to_have_css("fill", "rgb(179, 38, 60)")
+    expect(page.locator(".action-event > .text-block")).to_have_css(
+        "background-color", "rgb(234, 244, 255)"
+    )
+    expect(page.locator(".observation-event > .text-block")).to_have_css(
+        "background-color", "rgb(255, 248, 220)"
+    )
+    expect(page.locator(".action-event pre")).to_have_css("font-size", "13.75px")
+    expect(page.locator(".action-event .expand-text")).to_have_text("Show all")
+    page.locator(".reward-info > summary").last.click()
+    expect(page.locator(".json-scalar.negative")).to_have_css(
+        "color", "rgb(179, 38, 60)"
+    )
+    expect(page.locator(".json-scalar.negative")).to_have_css("font-weight", "700")
+    # A zero reward still has a bar but does not get a delta label.
+    page.evaluate("""() => {
+        const panel = rewardChart([{index: 1, reward: 0}, {index: 2, reward: 0.2}, {index: 3, reward: -0.05}]);
+        document.querySelector('.chart-panel').replaceWith(panel);
+    }""")
+    expect(page.locator(".bar")).to_have_count(3)
+    expect(page.locator(".chart-value")).to_have_count(2)
+    assert not errors

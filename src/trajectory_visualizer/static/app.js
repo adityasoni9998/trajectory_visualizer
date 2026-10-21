@@ -11,6 +11,7 @@ const state = {
   stepRequest: 0,
   detailRequest: 0,
   refreshing: false,
+  randomRanks: new Map(),
 };
 const initial = new URLSearchParams(location.hash.slice(1));
 const number = (value) => typeof value === "number" && Number.isFinite(value);
@@ -23,6 +24,137 @@ const color = (value) =>
     : number(value) && value > 0
       ? "positive"
       : "";
+
+const preferenceKey = "trajectory-viewer-layout-v1";
+let preferences = {};
+try {
+  preferences = JSON.parse(localStorage.getItem(preferenceKey)) || {};
+} catch {}
+const layout = {
+  stepsWidth: number(preferences.stepsWidth) ? preferences.stepsWidth : 180,
+  tasksWidth: number(preferences.tasksWidth) ? preferences.tasksWidth : 360,
+  stepsCollapsed: preferences.stepsCollapsed === true,
+  tasksCollapsed: preferences.tasksCollapsed === true,
+};
+const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+function savePreferences() {
+  try {
+    localStorage.setItem(
+      preferenceKey,
+      JSON.stringify({ ...layout, sort: $("sort").value }),
+    );
+  } catch {}
+}
+
+function applyLayout() {
+  const workspace = $("workspace");
+  let stepsWidth = layout.stepsCollapsed
+    ? 0
+    : clamp(layout.stepsWidth, 110, 400);
+  let tasksWidth = layout.tasksCollapsed
+    ? 0
+    : clamp(layout.tasksWidth, 220, 720);
+  const available = workspace.clientWidth - 292;
+  if (
+    !matchMedia("(max-width: 760px)").matches &&
+    stepsWidth + tasksWidth > available
+  ) {
+    if (tasksWidth) tasksWidth = Math.max(220, available - stepsWidth);
+    if (stepsWidth && stepsWidth + tasksWidth > available)
+      stepsWidth = Math.max(110, available - tasksWidth);
+  }
+  workspace.style.setProperty("--steps-width", `${stepsWidth}px`);
+  workspace.style.setProperty("--tasks-width", `${tasksWidth}px`);
+  for (const pane of ["steps", "tasks"]) {
+    const collapsed = layout[`${pane}Collapsed`];
+    workspace.classList.toggle(`${pane}-collapsed`, collapsed);
+    const toggle = $(`toggle-${pane}`);
+    toggle.setAttribute("aria-expanded", String(!collapsed));
+    toggle.setAttribute(
+      "aria-label",
+      `${collapsed ? "Show" : "Hide"} ${pane} sidebar`,
+    );
+    toggle.title = `${collapsed ? "Show" : "Hide"} ${pane} sidebar`;
+    $(`resize-${pane}`).setAttribute(
+      "aria-valuenow",
+      Math.round(pane === "steps" ? stepsWidth : tasksWidth),
+    );
+  }
+}
+
+function setupLayout() {
+  for (const pane of ["steps", "tasks"]) {
+    const key = `${pane}Width`;
+    const min = pane === "steps" ? 110 : 220;
+    const max = pane === "steps" ? 400 : 720;
+    const handle = $(`resize-${pane}`);
+    let drag = null;
+    $(`toggle-${pane}`).addEventListener("click", () => {
+      layout[`${pane}Collapsed`] = !layout[`${pane}Collapsed`];
+      applyLayout();
+      savePreferences();
+    });
+    handle.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      drag = {
+        id: event.pointerId,
+        x: event.clientX,
+        width: $(`${pane}-pane`).getBoundingClientRect().width,
+      };
+      handle.setPointerCapture(event.pointerId);
+      $("workspace").classList.add("resizing");
+    });
+    handle.addEventListener("pointermove", (event) => {
+      if (!drag || drag.id !== event.pointerId) return;
+      layout[key] = clamp(drag.width + event.clientX - drag.x, min, max);
+      applyLayout();
+    });
+    const endDrag = (event) => {
+      if (!drag || drag.id !== event.pointerId) return;
+      drag = null;
+      $("workspace").classList.remove("resizing");
+      if (handle.hasPointerCapture(event.pointerId))
+        handle.releasePointerCapture(event.pointerId);
+      savePreferences();
+    };
+    handle.addEventListener("pointerup", endDrag);
+    handle.addEventListener("pointercancel", endDrag);
+    handle.addEventListener("keydown", (event) => {
+      const increment = event.shiftKey ? 40 : 10;
+      let width = $(`${pane}-pane`).getBoundingClientRect().width;
+      if (event.key === "ArrowLeft") width -= increment;
+      else if (event.key === "ArrowRight") width += increment;
+      else if (event.key === "Home") width = min;
+      else if (event.key === "End") width = max;
+      else return;
+      event.preventDefault();
+      layout[key] = clamp(width, min, max);
+      applyLayout();
+      savePreferences();
+    });
+  }
+  addEventListener("resize", applyLayout);
+  applyLayout();
+}
+
+function rewardVariance(group) {
+  const values = group.rollouts.map((row) => row.reward).filter(number);
+  if (!values.length) return null;
+  const mean =
+    values.reduce((total, value) => total + value, 0) / values.length;
+  return (
+    values.reduce((total, value) => total + (value - mean) ** 2, 0) /
+    values.length
+  );
+}
+
+function compareMetric(a, b, ascending = false) {
+  if (!number(a)) return number(b) ? 1 : 0;
+  if (!number(b)) return -1;
+  return ascending ? a - b : b - a;
+}
 
 function el(tag, className = "", text = null) {
   const node = document.createElement(tag);
@@ -78,8 +210,29 @@ function renderGroups() {
       group.task_id.toLowerCase().includes(query) ||
       group.rollouts.some((row) => row.file.toLowerCase().includes(query)),
   );
-  if ($("sort").value === "task")
-    groups.sort((a, b) => a.task_id.localeCompare(b.task_id));
+  const sort = $("sort").value;
+  $("reshuffle").hidden = sort !== "random";
+  if (sort === "random") {
+    for (const group of groups) {
+      if (!state.randomRanks.has(group.task_id))
+        state.randomRanks.set(group.task_id, Math.random());
+    }
+  }
+  groups.sort((a, b) => {
+    const byId = a.task_id.localeCompare(b.task_id);
+    if (sort === "task") return byId;
+    if (sort === "random")
+      return (
+        state.randomRanks.get(a.task_id) - state.randomRanks.get(b.task_id) ||
+        byId
+      );
+    if (sort === "variance")
+      return compareMetric(a.reward_variance, b.reward_variance) || byId;
+    return (
+      compareMetric(a.average_reward, b.average_reward, sort === "lowest") ||
+      byId
+    );
+  });
   $("task-count").textContent =
     `${groups.length} task${groups.length === 1 ? "" : "s"}`;
   const fragment = document.createDocumentFragment();
@@ -94,10 +247,25 @@ function renderGroups() {
         `${group.rollouts.length} rollouts · ${group.finished} finished`,
       ),
     );
-    button.append(
-      name,
-      el("span", "group-average", `avg ${format(group.average_reward)}`),
+    const statistics = el("div", "group-statistics");
+    statistics.append(
+      el(
+        "span",
+        `group-average reward ${color(group.average_reward)}`,
+        `avg ${format(group.average_reward)}`,
+      ),
     );
+    if (sort === "variance") {
+      const variance = el(
+        "div",
+        "group-variance",
+        `var ${format(group.reward_variance)}`,
+      );
+      variance.title =
+        "Population variance of finished rollout rewards; missing rewards are excluded";
+      statistics.append(variance);
+    }
+    button.append(name, statistics);
     const open = state.openedGroups.has(group.task_id) || Boolean(query);
     button.setAttribute("aria-expanded", String(open));
     button.addEventListener("click", () => {
@@ -176,9 +344,7 @@ function textBlock(value, key) {
     const update = () => {
       const expanded = state.expanded.has(expandedKey);
       pre.textContent = expanded ? text : `${preview}\n…`;
-      button.textContent = expanded
-        ? "Show less"
-        : `Show all · ${text.length.toLocaleString()} characters`;
+      button.textContent = expanded ? "Show less" : "Show all";
       button.setAttribute("aria-expanded", String(expanded));
     };
     button.addEventListener("click", () => {
@@ -239,7 +405,14 @@ function jsonTree(value, key) {
         (child.length > 180 || child.includes("\n"))
       )
         row.append(textBlock(child, childKey));
-      else row.append(el("span", "json-scalar", JSON.stringify(child)));
+      else
+        row.append(
+          el(
+            "span",
+            `json-scalar ${number(child) ? `reward ${color(child)}` : ""}`,
+            JSON.stringify(child),
+          ),
+        );
       tree.append(row);
     }
   }
@@ -261,7 +434,10 @@ function rewardInfo(
 }
 
 function eventBlock(label, tool, text, key, isError = false, callId = null) {
-  const event = el("section", "event");
+  const event = el(
+    "section",
+    `event ${label === "OBSERVATION" ? "observation-event" : "action-event"}`,
+  );
   const heading = el("div", "event-heading");
   heading.append(
     el(
@@ -289,7 +465,7 @@ function rewardChart(turns) {
   panel.append(heading);
   const ns = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(ns, "svg");
-  svg.setAttribute("viewBox", "0 0 700 130");
+
   svg.setAttribute("role", "group");
   svg.setAttribute(
     "aria-label",
@@ -306,7 +482,26 @@ function rewardChart(turns) {
     low = -0.05;
     high = 0.05;
   }
-  const y = (value) => 100 - ((value - low) / (high - low)) * 80;
+  const width = 630 / Math.max(1, turns.length);
+  const lanes = { positive: [], negative: [] };
+  const labels = [];
+  turns.forEach((turn, position) => {
+    if (!number(turn.reward) || turn.reward === 0) return;
+    const text = signed(turn.reward);
+    const x = 52 + position * width + width * 0.35;
+    const halfWidth = text.length * 3.8;
+    const side = turn.reward > 0 ? "positive" : "negative";
+    let lane = lanes[side].findIndex((right) => x - halfWidth > right + 5);
+    if (lane === -1) lane = lanes[side].length;
+    lanes[side][lane] = x + halfWidth;
+    labels.push({ text, x, side, lane, index: turn.index });
+  });
+  const top = Math.max(24, lanes.positive.length * 16 + 12);
+  const bottom = Math.max(30, lanes.negative.length * 16 + 30);
+  const height = top + 80 + bottom;
+  svg.setAttribute("viewBox", `0 0 700 ${height}`);
+  svg.style.height = `${height}px`;
+  const y = (value) => top + 80 - ((value - low) / (high - low)) * 80;
   const add = (tag, attrs, text = null) => {
     const element = document.createElementNS(ns, tag);
     for (const [key, value] of Object.entries(attrs))
@@ -318,7 +513,6 @@ function rewardChart(turns) {
   add("line", { x1: 48, x2: 690, y1: y(0), y2: y(0), class: "chart-axis" });
   add("text", { x: 0, y: y(high) + 4, class: "chart-label" }, format(high));
   add("text", { x: 0, y: y(low) + 4, class: "chart-label" }, format(low));
-  const width = 630 / Math.max(1, turns.length);
   turns.forEach((turn, position) => {
     if (!number(turn.reward)) return;
     const rect = add("rect", {
@@ -350,15 +544,33 @@ function rewardChart(turns) {
   });
   add(
     "text",
-    { x: 52, y: 122, class: "chart-label" },
+    { x: 52, y: height - 5, class: "chart-label" },
     `step ${turns[0].index}`,
   );
   add(
     "text",
-    { x: 690, y: 122, class: "chart-label", "text-anchor": "end" },
+    { x: 690, y: height - 5, class: "chart-label", "text-anchor": "end" },
     `step ${turns.at(-1).index}`,
   );
-  panel.append(svg);
+  for (const label of labels) {
+    add(
+      "text",
+      {
+        x: label.x,
+        y:
+          label.side === "positive"
+            ? top - 8 - label.lane * 16
+            : top + 96 + label.lane * 16,
+        class: `chart-value ${label.side}`,
+        "text-anchor": "middle",
+        "aria-label": `Step ${label.index} delta ${label.text}`,
+      },
+      label.text,
+    );
+  }
+  const scroll = el("div", "chart-scroll");
+  scroll.append(svg);
+  panel.append(scroll);
   return panel;
 }
 
@@ -581,7 +793,10 @@ async function loadStep(step, preserve = false, requestedFile = null) {
   try {
     const data = await api("/api/rollouts", { step });
     if (request !== state.stepRequest) return;
-    state.groups = data.groups;
+    state.groups = data.groups.map((group) => ({
+      ...group,
+      reward_variance: rewardVariance(group),
+    }));
     $("run-stats").replaceChildren();
     for (const [label, value] of [
       ["rollouts", data.total],
@@ -650,7 +865,20 @@ async function refresh(first = false) {
 
 $("refresh").addEventListener("click", () => refresh());
 $("search").addEventListener("input", renderGroups);
-$("sort").addEventListener("change", renderGroups);
+$("sort").addEventListener("change", () => {
+  if ($("sort").value === "random") state.randomRanks.clear();
+  savePreferences();
+  renderGroups();
+});
+$("reshuffle").addEventListener("click", () => {
+  state.randomRanks.clear();
+  renderGroups();
+});
+if (
+  ["reward", "lowest", "variance", "random", "task"].includes(preferences.sort)
+)
+  $("sort").value = preferences.sort;
+setupLayout();
 $("live").addEventListener("change", () => {
   if ($("live").checked) refresh();
 });

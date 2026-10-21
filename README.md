@@ -80,16 +80,20 @@ authentication; the loopback default is intended for local use or SSH forwarding
 
 The HTML view provides:
 
-- A training-step sidebar and searchable task groups, sorted by average reward
-  or task ID. Grouping uses the logged `task.id`, falling back to filename prefixes
+- Resizable training-step and task sidebars: drag their dividers (or focus a
+  divider and use arrow keys). **Steps** and **Tasks** buttons collapse or restore
+  them. Widths, visibility, and sort choice are remembered in this browser.
+- Searchable task groups, sorted by highest/lowest average reward, highest reward
+  variance, random order (with a reshuffle button), or task ID. Grouping uses the logged `task.id`, falling back to filename prefixes
   when older logs omit it. Rollouts within each group sort by recorded final reward.
 - A trajectory timeline with **aggregate step reward and cumulative reward always
-  visible**. The reward chart lets you jump directly to a step. Rewards are taken
+  visible**. The reward chart lets you jump directly to a step. Positive bars are green,
+  negative bars red, and nonzero bars display signed step-reward labels. Rewards are taken
   from the log, with no reconstruction or assumed component weights.
 - Collapsed reward-info dictionaries. Expand any nested dictionary or array;
   unfamiliar keys work without configuration. Last-observed numeric diagnostics
   and terminal reward info are available in separate collapsed sections.
-- Actions paired with their observations, including parallel tool calls and
+- Light-blue actions paired with light-yellow observations, including parallel tool calls and
   unmatched observations. Long text starts truncated to 10 lines / 700 characters;
   **Show all** and **Show less** toggle the complete text independently.
 - A **Refresh** button and optional **Live refresh** every 30 seconds while the tab
@@ -101,7 +105,10 @@ The HTML view provides:
 
 Run averages include finished rollouts with finite recorded rewards, including
 zero and negative values. Running rollouts do not enter these averages; their
-recorded reward so far is visible in the trajectory view.
+recorded reward so far is visible in the trajectory view. Variance is the population
+variance of finished rollout rewards within each task; groups without recorded
+final rewards sort last. Positive and negative numeric reward-info values are
+bold green and red respectively.
 
 The HTML server reuses the same parser as the TUI, caches file summaries, and
 loads full trajectories only when selected. There are no runtime dependencies
