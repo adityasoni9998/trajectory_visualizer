@@ -15,22 +15,6 @@
         ><span class="brand-sub">ROLLOUT EXPLORER</span>
       </div>
       <div class="toolbar">
-        <button
-          id="toggle-steps"
-          class="button panel-toggle"
-          aria-controls="steps-pane"
-          aria-expanded="true"
-        >
-          Steps
-        </button>
-        <button
-          id="toggle-tasks"
-          class="button panel-toggle"
-          aria-controls="tasks-pane"
-          aria-expanded="true"
-        >
-          Tasks
-        </button>
         <label class="live"
           ><input id="live" type="checkbox" /> Live refresh</label
         ><button id="refresh" class="button">↻ Refresh</button>
@@ -48,19 +32,30 @@
           <div id="root" title="Rollout directory"></div>
         </div>
       </aside>
-      <div
-        id="resize-steps"
-        class="resize-handle"
-        role="separator"
-        tabindex="0"
-        aria-label="Resize training steps"
-        aria-orientation="vertical"
-        aria-controls="steps-pane"
-        aria-valuemin="110"
-        aria-valuemax="400"
-        aria-valuenow="180"
-        title="Drag to resize steps; arrow keys also adjust width"
-      ></div>
+      <div id="divider-steps" class="pane-divider">
+        <div
+          id="resize-steps"
+          class="resize-handle"
+          role="separator"
+          tabindex="0"
+          aria-label="Resize training steps"
+          aria-orientation="vertical"
+          aria-controls="steps-pane"
+          aria-valuemin="110"
+          aria-valuemax="400"
+          aria-valuenow="180"
+          title="Drag to resize steps; arrow keys also adjust width"
+        ></div>
+        <button
+          id="toggle-steps"
+          class="divider-toggle"
+          aria-controls="steps-pane"
+          aria-expanded="true"
+          aria-label="Hide steps sidebar"
+        >
+          <span aria-hidden="true">‹</span>
+        </button>
+      </div>
       <aside
         class="rollouts-sidebar"
         id="tasks-pane"
@@ -102,19 +97,30 @@
         </div>
         <div id="groups" class="groups"></div>
       </aside>
-      <div
-        id="resize-tasks"
-        class="resize-handle"
-        role="separator"
-        tabindex="0"
-        aria-label="Resize task list"
-        aria-orientation="vertical"
-        aria-controls="tasks-pane"
-        aria-valuemin="220"
-        aria-valuemax="720"
-        aria-valuenow="360"
-        title="Drag to resize tasks; arrow keys also adjust width"
-      ></div>
+      <div id="divider-tasks" class="pane-divider">
+        <div
+          id="resize-tasks"
+          class="resize-handle"
+          role="separator"
+          tabindex="0"
+          aria-label="Resize task list"
+          aria-orientation="vertical"
+          aria-controls="tasks-pane"
+          aria-valuemin="220"
+          aria-valuemax="720"
+          aria-valuenow="360"
+          title="Drag to resize tasks; arrow keys also adjust width"
+        ></div>
+        <button
+          id="toggle-tasks"
+          class="divider-toggle"
+          aria-controls="tasks-pane"
+          aria-expanded="true"
+          aria-label="Hide tasks sidebar"
+        >
+          <span aria-hidden="true">‹</span>
+        </button>
+      </div>
       <main id="main" tabindex="-1">
         <div id="status" role="status" aria-live="polite"></div>
         <div id="trajectory" class="trajectory">

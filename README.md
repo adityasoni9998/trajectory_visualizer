@@ -81,8 +81,8 @@ authentication; the loopback default is intended for local use or SSH forwarding
 The HTML view provides:
 
 - Resizable training-step and task sidebars: drag their dividers (or focus a
-  divider and use arrow keys). **Steps** and **Tasks** buttons collapse or restore
-  them. Widths, visibility, and sort choice are remembered in this browser.
+  divider and use arrow keys). Arrow buttons on the dividers collapse or restore
+  each sidebar, and remain available when collapsed. Widths, visibility, and sort choice are remembered in this browser.
 - Searchable task groups, sorted by highest/lowest average reward, highest reward
   variance, random order (with a reshuffle button), or task ID. Grouping uses the logged `task.id`, falling back to filename prefixes
   when older logs omit it. Rollouts within each group sort by recorded final reward.

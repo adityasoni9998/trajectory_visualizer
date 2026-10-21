@@ -55,7 +55,11 @@ function applyLayout() {
   let tasksWidth = layout.tasksCollapsed
     ? 0
     : clamp(layout.tasksWidth, 220, 720);
-  const available = workspace.clientWidth - 292;
+  const available =
+    workspace.clientWidth -
+    280 -
+    (layout.stepsCollapsed ? 28 : 6) -
+    (layout.tasksCollapsed ? 28 : 6);
   if (
     !matchMedia("(max-width: 760px)").matches &&
     stepsWidth + tasksWidth > available

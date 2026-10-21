@@ -159,7 +159,9 @@ def test_mobile_layout_has_no_horizontal_overflow(browser_view):
 def test_sidebar_resize_collapse_and_persistence(browser_view):
     page, _, errors = browser_view
     expect = playwright.expect
+    expect(page.locator(".topbar .divider-toggle")).to_have_count(0)
     for pane in ("steps", "tasks"):
+        expect(page.locator(f"#divider-{pane} #toggle-{pane}")).to_be_visible()
         sidebar = page.locator(f"#{pane}-pane")
         handle = page.locator(f"#resize-{pane}")
         original = sidebar.bounding_box()["width"]
@@ -174,6 +176,8 @@ def test_sidebar_resize_collapse_and_persistence(browser_view):
         assert sidebar.bounding_box()["width"] == pytest.approx(original + 60)
         page.locator(f"#toggle-{pane}").click()
         expect(sidebar).to_be_hidden()
+        expect(page.locator(f"#toggle-{pane}")).to_be_visible()
+        expect(handle).to_be_hidden()
     page.reload()
     expect(page.locator(".trajectory-header h1")).to_be_visible()
     expect(page.locator("#steps-pane")).to_be_hidden()
