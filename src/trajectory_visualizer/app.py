@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import random
 import re
@@ -8,7 +9,6 @@ from numbers import Real
 from pathlib import Path
 
 from rich import box
-from rich.columns import Columns
 from rich.console import Group
 from rich.markup import escape
 from rich.panel import Panel
@@ -16,7 +16,7 @@ from rich.syntax import Syntax
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.timer import Timer
 from textual import work
@@ -36,6 +36,7 @@ from textual.worker import Worker, WorkerState
 from .model import Action, Observation, Trajectory
 from .parser import (
     TrajectoryParseError,
+    _reward_components,
     load_trajectory,
     resolve_trajectory_path,
     training_steps,
@@ -55,71 +56,6 @@ ROLLOUT_UUID_SUFFIX = re.compile(
     r"_[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\.jsonl$"
 )
-
-REWARD_HIERARCHY = (
-    (
-        "UNIT TESTS",
-        "composite_reward",
-        (
-            ("binary", ("binary_reward",), False),
-            ("f2p pass", ("f2p_pass_fraction",), False),
-            (
-                "p2p fail",
-                ("p2p_fail_fraction", "p2p_pass_fraction"),
-                True,
-            ),
-        ),
-    ),
-    (
-        "LOCALIZATION",
-        "localization_reward",
-        (
-            ("file f1", ("file_f1_reward",), False),
-            (
-                "function f1",
-                ("function_f1_reward", "entity_f1_reward"),
-                False,
-            ),
-            ("module f1", ("module_f1_reward",), False),
-        ),
-    ),
-    (
-        "TOOL FORMAT",
-        "tool_format_reward",
-        (
-            ("JSON formatting", ("tool_json_error_reward",), False),
-            (
-                "str replace",
-                ("str_replace_reward", "file_editor_reward"),
-                False,
-            ),
-            (
-                "agent error",
-                ("agent_error_reward", "agent_error_event_reward"),
-                False,
-            ),
-        ),
-    ),
-)
-
-KNOWN_REWARD_COMPONENTS = frozenset(
-    component_key
-    for _, aggregate_key, breakdown in REWARD_HIERARCHY
-    for component_key in (
-        aggregate_key,
-        *(key for _, keys, _ in breakdown for key in keys),
-    )
-)
-
-AVERAGED_REWARD_COMPONENTS = frozenset(
-    component_key
-    for _, aggregate_key, breakdown in REWARD_HIERARCHY
-    for component_key in (
-        aggregate_key,
-        *(keys[0] for _, keys, _ in breakdown),
-    )
-)
-
 
 def _clip(text: str, length: int = 90) -> str:
     clean = " ".join(text.split())
@@ -157,22 +93,12 @@ def _format_reward(reward: object) -> str:
 
 
 def _format_breakdown_reward(reward: object) -> str:
+    if reward is None:
+        return "?"
     numeric = _numeric_reward(reward)
     if numeric is None:
         return str(reward)
     return f"{numeric:.3f}"
-
-
-def _component_value(
-    components: dict[str, float], keys: tuple[str, ...], invert_alias: bool
-) -> float | None:
-    selected_key = next((key for key in keys if key in components), None)
-    if selected_key is None:
-        return None
-    value = components[selected_key]
-    if invert_alias and selected_key != keys[0]:
-        value = 1.0 - value
-    return value
 
 
 def _reward_sort_key(reward: object, filename: str) -> tuple[bool, float, str]:
@@ -194,28 +120,12 @@ def _average_reward(
 def _format_reward_components(
     components: dict[str, float], *, include_breakdown: bool = True
 ) -> str:
-    lines: list[str] = []
-    for header, aggregate_key, breakdown in REWARD_HIERARCHY:
-        children: list[str] = []
-        for label, keys, invert_alias in breakdown:
-            value = _component_value(components, keys, invert_alias)
-            if value is None:
-                continue
-            children.append(f"{label} {_format_breakdown_reward(value)}")
-        aggregate = components.get(aggregate_key)
-        if aggregate is None and not children:
-            continue
-        heading = header + (
-            f" {_format_reward(aggregate)}" if aggregate is not None else ""
-        )
-        lines.append(
-            heading
-            + (
-                f"  ›  {' · '.join(children)}"
-                if include_breakdown and children
-                else ""
-            )
-        )
+    items = sorted(components.items())
+    if not include_breakdown:
+        items = items[:4]
+    lines = [f"{name} {value:.3f}" for name, value in items]
+    if len(items) < len(components):
+        lines.append(f"+{len(components) - len(items)} more (open trajectory)")
     return "\n".join(lines)
 
 
@@ -235,70 +145,37 @@ def _reward_box(name: str, value: object, *, breakdown: bool = False) -> Panel:
 
 
 def _reward_boxes(total: object, components: dict[str, float]) -> Group:
-    sections: list[object] = [
-        Columns([_reward_box("total reward", total)], padding=(0, 1))
-    ]
-    for header, aggregate_key, breakdown in REWARD_HIERARCHY:
-        boxes: list[Panel] = []
-        if aggregate_key in components:
-            boxes.append(_reward_box(header, components[aggregate_key]))
-        for label, keys, invert_alias in breakdown:
-            value = _component_value(components, keys, invert_alias)
-            if value is not None:
-                boxes.append(_reward_box(label, value, breakdown=True))
-        if boxes:
-            sections.append(Text(header, style="bold orange3"))
-            sections.append(Columns(boxes, padding=(0, 1)))
-    return Group(*sections)
+    return Group(
+        _reward_box("total reward (recorded)", total),
+        Panel(Text(_format_reward_components(components) or "No numeric diagnostics"),
+              title="Reward metadata · last observed (sum: = selected step sums)", border_style="orange3"),
+    )
 
 
-def _average_reward_components(
-    rows: list[tuple[Path, tuple[object, ...]]],
-) -> dict[str, float]:
-    eligible_metadata = [
-        metadata
-        for _, metadata in rows
-        if _numeric_reward(metadata[0]) is not None
-    ]
-    if not eligible_metadata:
-        return {}
-
-    totals = {name: 0.0 for name in AVERAGED_REWARD_COMPONENTS}
-    for metadata in eligible_metadata:
+def _component_stats(rows: list[tuple[Path, tuple[object, ...]]]) -> dict[str, tuple[float, int]]:
+    totals: dict[str, float] = {}
+    counts: dict[str, int] = {}
+    eligible = [metadata for _, metadata in rows if _numeric_reward(metadata[0]) is not None]
+    for metadata in eligible:
         components = metadata[4]
         if not isinstance(components, dict):
             continue
-
-        # Normalize fallback field names to the primary display field before
-        # averaging, so aliases also use the common rollout denominator.
-        for _, aggregate_key, breakdown in REWARD_HIERARCHY:
-            if (numeric := _numeric_reward(components.get(aggregate_key))) is not None:
-                totals[aggregate_key] += numeric
-            for _, keys, invert_alias in breakdown:
-                numeric = _numeric_reward(
-                    _component_value(components, keys, invert_alias)
-                )
-                if numeric is not None:
-                    totals[keys[0]] += numeric
-
-        # Preserve additional numeric reward fields even if they are not part
-        # of the displayed hierarchy. Missing values still contribute zero.
         for name, value in components.items():
-            name = str(name)
-            if name in KNOWN_REWARD_COMPONENTS:
-                continue
             if (numeric := _numeric_reward(value)) is not None:
                 totals[name] = totals.get(name, 0.0) + numeric
+                counts[name] = counts.get(name, 0) + 1
+    # Preserve the viewer's common denominator, including finished zero rewards.
+    return {name: (total / len(eligible), counts[name]) for name, total in totals.items()}
 
-    denominator = len(eligible_metadata)
-    return {name: total / denominator for name, total in totals.items()}
+
+def _average_reward_components(rows: list[tuple[Path, tuple[object, ...]]]) -> dict[str, float]:
+    return {name: mean for name, (mean, _) in _component_stats(rows).items()}
 
 
 def _all_files_reward_text(
     rows: list[tuple[Path, tuple[object, ...]]], group_size: int = 8,
 ) -> Text:
     average = _average_reward(rows)
-    components = _average_reward_components(rows)
     rewarded_count = sum(
         _numeric_reward(metadata[0]) is not None for _, metadata in rows
     )
@@ -323,35 +200,9 @@ def _all_files_reward_text(
         f"COMPLETED GROUPS  {completed_groups}/{len(groups)}"
         f"  (expected {group_size} rollouts/group)\n", style="bold orange3"
     )
-    shown_aggregates = 0
-    for header, aggregate_key, breakdown in REWARD_HIERARCHY:
-        value = components.get(aggregate_key)
-        child_values = [
-            (label, child_value)
-            for label, keys, invert_alias in breakdown
-            if (child_value := _component_value(
-                components, keys, invert_alias
-            ))
-            is not None
-        ]
-        if value is None and not child_values:
-            continue
-        if shown_aggregates:
-            summary.append("\n")
-        summary.append(f"{header}  ", style="bold bright_cyan")
-        if value is not None:
-            summary.append(_format_reward(value), style="bold bright_white")
-        if child_values:
-            summary.append("  ›  ", style="orange3")
-        for index, (label, child_value) in enumerate(child_values):
-            if index:
-                summary.append("  ·  ", style="orange3")
-            summary.append(f"{label} ", style="bright_cyan")
-            summary.append(
-                _format_breakdown_reward(child_value),
-                style="bold bright_white",
-            )
-        shown_aggregates += 1
+    summary.append("METADATA AVG · last observed; sum: = selected step sums; missing = 0\n", style="dim")
+    for name, (mean, count) in sorted(_component_stats(rows).items()):
+        summary.append(f"{name}  {mean:.3f}  (present {count}/{rewarded_count})\n")
     return summary
 
 
@@ -417,14 +268,14 @@ class TrajectoryApp(App[None]):
         height: 1fr;
     }
     #sidebar {
-        width: 12;
-        min-width: 10;
+        width: 8;
+        min-width: 8;
         border-right: solid #334155;
         background: #111827;
     }
     #sidebar-title {
-        height: 3;
-        padding: 1;
+        height: 2;
+        padding: 0 1;
         color: #94a3b8;
         text-style: bold;
     }
@@ -439,6 +290,10 @@ class TrajectoryApp(App[None]):
         padding: 1 2;
         background: #111827;
         color: #cbd5e1;
+    }
+    #reward-summary-scroll {
+        height: auto;
+        max-height: 12;
     }
     #reward-summary {
         height: auto;
@@ -479,6 +334,8 @@ class TrajectoryApp(App[None]):
         Binding("s", "toggle_stream", "Stream"),
         Binding("p", "open_path", "Open path"),
         Binding("g", "jump_step", "Go to step"),
+        Binding("t", "toggle_sidebar", "Steps"),
+        Binding("i", "toggle_reward_info", "Reward info"),
         Binding("b", "back_to_list", "Back"),
         Binding("escape", "back_to_list", "Back", show=False),
         Binding("[", "previous_step", "Prev step", show=False),
@@ -496,9 +353,12 @@ class TrajectoryApp(App[None]):
         observation_limit: int = 500,
         refresh_interval: float = DEFAULT_REFRESH_INTERVAL,
         group_size: int = 8,
+        sum_metrics: tuple[str, ...] = (),
     ) -> None:
         super().__init__()
         self.root = root
+        self.sum_metrics = sum_metrics
+        self.show_reward_info = False
         self.group_size = group_size
         self.initial_step = initial_step
         self.initial_file = initial_file
@@ -513,17 +373,19 @@ class TrajectoryApp(App[None]):
         self.selected_step_index = 0
         self.loaded: Trajectory | None = None
         self.detail_mode = False
+        self.sidebar_collapsed = False
         self.step_loading = False
 
     def compose(self) -> ComposeResult:
         yield Header()
         with Horizontal(id="body"):
             with Vertical(id="sidebar"):
-                yield Label("TRAIN STEP", id="sidebar-title")
+                yield Label("STEP", id="sidebar-title")
                 yield StepList(id="steps")
             with Vertical(id="content"):
                 yield Static("Loading steps…", id="step-summary")
-                yield Static("Calculating all-file averages…", id="reward-summary")
+                with VerticalScroll(id="reward-summary-scroll"):
+                    yield Static("Calculating all-file averages…", id="reward-summary")
                 yield LoadingIndicator(id="loading")
                 yield DataTable(cursor_type="row", zebra_stripes=True, id="trajectories")
                 yield RichLog(
@@ -556,7 +418,7 @@ class TrajectoryApp(App[None]):
             "final error",
             "actions",
             "trajectory file",
-            "reward breakdown",
+            "reward metadata (last observed / sum:)",
         )
 
         target_index = len(self.steps) - 1
@@ -645,9 +507,11 @@ class TrajectoryApp(App[None]):
 
     def show_list_view(self) -> None:
         self.detail_mode = False
-        self.query_one("#sidebar").styles.display = "block"
+        self.query_one("#sidebar").styles.display = (
+            "none" if self.sidebar_collapsed else "block"
+        )
         self.query_one("#step-summary").styles.display = "block"
-        self.query_one("#reward-summary").styles.display = "block"
+        self.query_one("#reward-summary-scroll").styles.display = "block"
         self.query_one("#trajectories").styles.display = "block"
         self.query_one("#timeline").styles.display = "none"
         self.query_one("#loading").styles.display = (
@@ -656,11 +520,19 @@ class TrajectoryApp(App[None]):
         if self.is_mounted:
             self.query_one("#trajectories", DataTable).focus()
 
+    def action_toggle_sidebar(self) -> None:
+        self.sidebar_collapsed = not self.sidebar_collapsed
+        self.query_one("#sidebar").styles.display = (
+            "none" if self.sidebar_collapsed or self.detail_mode else "block"
+        )
+        if not self.detail_mode:
+            self.query_one("#trajectories", DataTable).focus()
+
     def show_detail_view(self) -> None:
         self.detail_mode = True
         self.query_one("#sidebar").styles.display = "none"
         self.query_one("#step-summary").styles.display = "none"
-        self.query_one("#reward-summary").styles.display = "none"
+        self.query_one("#reward-summary-scroll").styles.display = "none"
         self.query_one("#trajectories").styles.display = "none"
         self.query_one("#loading").styles.display = "none"
         timeline = self.query_one("#timeline", RichLog)
@@ -668,9 +540,9 @@ class TrajectoryApp(App[None]):
         timeline.focus()
 
     @staticmethod
-    def _row_metadata(path: Path) -> tuple[object, ...]:
+    def _row_metadata(path: Path, sum_metrics: tuple[str, ...] = ()) -> tuple[object, ...]:
         try:
-            trajectory = load_trajectory(path)
+            trajectory = load_trajectory(path, sum_metrics=sum_metrics)
             return (
                 trajectory.reward if trajectory.is_finished else None,
                 _clip(trajectory.error_message, 60) if trajectory.error_message else "",
@@ -684,9 +556,9 @@ class TrajectoryApp(App[None]):
 
     @classmethod
     def _sorted_step_rows(
-        cls, files: list[Path]
+        cls, files: list[Path], sum_metrics: tuple[str, ...] = ()
     ) -> list[tuple[Path, tuple[object, ...]]]:
-        rows = [(path, cls._row_metadata(path)) for path in files]
+        rows = [(path, cls._row_metadata(path, sum_metrics)) for path in files]
         grouped: dict[str, list[tuple[Path, tuple[object, ...]]]] = {}
         for row in rows:
             grouped.setdefault(_rollout_group(row[0]), []).append(row)
@@ -725,7 +597,7 @@ class TrajectoryApp(App[None]):
         Path | None,
         bool,
     ]:
-        return step, self._sorted_step_rows(files), restore_file, restore_detail
+        return step, self._sorted_step_rows(files, self.sum_metrics), restore_file, restore_detail
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         if event.worker.group != "step-loader" or event.state != WorkerState.SUCCESS:
@@ -773,7 +645,7 @@ class TrajectoryApp(App[None]):
                     Text(
                         f"avg total {average_label}"
                         + (
-                            " · " + _format_reward_components(average_components).replace("\n", " | ")
+                            " · " + _format_reward_components(average_components, include_breakdown=False).replace("\n", " | ")
                             if average_components
                             else ""
                         ),
@@ -841,7 +713,7 @@ class TrajectoryApp(App[None]):
         table = self.query_one("#trajectories", DataTable)
         table.move_cursor(row=self.table_row_by_file_index.get(index, index))
         try:
-            self.loaded = load_trajectory(self.files[index])
+            self.loaded = load_trajectory(self.files[index], sum_metrics=self.sum_metrics)
         except TrajectoryParseError as exc:
             self.notify(str(exc), severity="error")
             return
@@ -893,9 +765,19 @@ class TrajectoryApp(App[None]):
         action_number = 0
         observation_number = 0
         for turn in trajectory.turns:
-            if not turn.actions and not turn.unmatched_observations:
-                continue
-            log.write(Text(f" STEP {turn.index} ", style="bold reverse"))
+            log.write(Text(
+                f" STEP {turn.index} · step reward={_format_breakdown_reward(turn.reward)}"
+                f" · cumulative={_format_breakdown_reward(turn.cumulative_reward)} ",
+                style="bold reverse",
+            ))
+            if turn.reward_info:
+                metrics = _format_reward_components(_reward_components(turn.reward_info))
+                if self.show_reward_info:
+                    body = Syntax(json.dumps(turn.reward_info, indent=2, ensure_ascii=False), "json", word_wrap=True)
+                else:
+                    body = Text(metrics or "No numeric diagnostics. Press i for full reward info.")
+                log.write(Panel(body, title="Step reward info (i: toggle full JSON)",
+                                border_style="orange3"), expand=True)
             # Each action retains every matched observation. This correctly renders
             # parallel tool calls recorded together in a single trajectory step.
             for action in turn.actions:
@@ -973,6 +855,12 @@ class TrajectoryApp(App[None]):
                 ),
                 expand=True,
             )
+        if self.show_reward_info and trajectory.terminal_reward_info:
+            log.write(Panel(
+                Syntax(json.dumps(trajectory.terminal_reward_info, indent=2, ensure_ascii=False),
+                       "json", word_wrap=True),
+                title="Terminal reward info", border_style="orange3",
+            ), expand=True)
         if trajectory.is_finished:
             log.write(
                 _reward_boxes(trajectory.reward, trajectory.reward_components),
@@ -982,6 +870,11 @@ class TrajectoryApp(App[None]):
             log.scroll_end(animate=False)
         else:
             log.scroll_home(animate=False)
+
+    def action_toggle_reward_info(self) -> None:
+        self.show_reward_info = not self.show_reward_info
+        if self.detail_mode and self.loaded is not None:
+            self.render_trajectory(self.loaded)
 
     def on_resize(self) -> None:
         if self.detail_mode and self.loaded is not None:
@@ -1049,7 +942,7 @@ class TrajectoryApp(App[None]):
 
         if restore_detail and restore_file is not None:
             try:
-                self.loaded = load_trajectory(restore_file)
+                self.loaded = load_trajectory(restore_file, sum_metrics=self.sum_metrics)
             except TrajectoryParseError as exc:
                 self.notify(str(exc), severity="error")
             else:
@@ -1155,7 +1048,11 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="?",
         type=Path,
         default=DEFAULT_ROOT,
-        help="Training rollout root containing numeric step directories.",
+        help="Training rollout root, numeric step directory, or events directory.",
+    )
+    parser.add_argument(
+        "--sum-metric", action="append", default=[], metavar="GLOB",
+        help="Also show a sum across steps for matching numeric metadata paths (repeatable).",
     )
     parser.add_argument("--group-size", type=int, default=8,
                         help="Expected rollouts per completed group (default: 8).")
@@ -1188,7 +1085,9 @@ def main() -> None:
     args = build_parser().parse_args()
     if args.group_size < 1:
         raise SystemExit("--group-size must be at least 1")
-    if args.refresh_interval < 0:
+    if args.observation_limit < 0:
+        raise SystemExit("--observation-limit must be zero or greater")
+    if not math.isfinite(args.refresh_interval) or args.refresh_interval < 0:
         raise SystemExit("--refresh-interval must be zero or greater")
     root = args.root.expanduser().resolve()
     initial_file = args.file.expanduser().resolve() if args.file else None
@@ -1204,6 +1103,7 @@ def main() -> None:
         observation_limit=args.observation_limit,
         refresh_interval=args.refresh_interval,
         group_size=args.group_size,
+        sum_metrics=tuple(args.sum_metric),
     ).run()
 
 

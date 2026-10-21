@@ -300,11 +300,11 @@ def test_rebench_nested_rewards_preserve_binary_total(tmp_path, terminal_metadat
     ])
     trajectory = load_trajectory(path)
     assert trajectory.reward == 0
-    assert trajectory.reward_components["file_f1_reward"] == 1.0
-    assert trajectory.reward_components["module_f1_reward"] == 0.5
-    assert trajectory.reward_components["entity_f1_reward"] == 0.0
+    assert trajectory.reward_components["localization/file_f1_reward"] == 1.0
+    assert trajectory.reward_components["localization/module_f1_reward"] == 0.5
+    assert trajectory.reward_components["localization/entity_f1_reward"] == 0.0
     assert trajectory.reward_components["tool_json_error_reward"] == 1.0
-    assert trajectory.reward_components["tool_format_reward"] == 0.5
+    assert "tool_format_reward" not in trajectory.reward_components
 
 
 def test_explicit_tool_aggregate_is_preserved():

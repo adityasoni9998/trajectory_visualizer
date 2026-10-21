@@ -14,25 +14,47 @@ group. Groups are sorted by decreasing average total reward, and rollouts within
 each group are sorted by decreasing individual reward. Unfinished or invalid
 rewards appear last. Styled separator rows show each group's rollout count and
 average total reward.
-When reward metadata is available, the final column also shows the individual
-reward components, F2P pass fraction, and P2P fail fraction for each rollout and
-their per-group averages. The breakdown is grouped under unit tests,
-localization, and tool-format rewards. Totals and parent rewards use two decimal places; child
-metrics use three. File-list rows show the three parent rewards; the summary box and trajectory
-details show the full child breakdown, including all tool-format components.
-Nested rebench localization metrics are supported. Tool format includes JSON
-formatting, agent-error, and file-editor scores; when no aggregate is logged,
-the viewer displays their mean. The total remains the recorded training reward,
-so binary-reward runs can still show nonzero dense diagnostics.
-The summary also counts groups whose expected rollouts have all finished.
-Use `--group-size N` to set the expected rollout count (default: 8); groups with
-missing files or unfinished rollouts do not count as complete.
-An orange summary panel above the file list shows the all-file average total,
-parent rewards, and individual child metrics for the selected training step.
-The total average uses every finished rollout with a finite numeric reward as
-its denominator, including zeroes. Every component average uses that same
-denominator; a missing component contributes zero, regardless of the rollout's
-total reward.
+Reward fields are discovered automatically from `step.misc.reward_misc` and
+optional `trajectory_finished.reward_misc`. Any finite numeric leaf is shown,
+including unfamiliar keys, nested scores, deltas, and penalties. Nested paths use
+`/` separators (`localization/file_f1_reward`); literal `~` and `/` in keys are
+escaped as `~0` and `~1`. The viewer does not invent aggregates or infer weights
+from field names. Booleans, text, arrays, and other diagnostics are retained in
+the full reward-info view (`i`). No plugin or log-format changes are required.
+
+Every recorded step shows its **step reward**, **cumulative event reward**, and
+numeric diagnostics, including reward-only settlement steps. The final total
+remains the recorded training reward; it is never reconstructed from metadata.
+Missing step or cumulative rewards display `?`, rather than an inferred value.
+
+The file list and final detail summary show each metric's **last observed numeric
+value**, retaining sparse metrics that are absent from later steps. These are
+snapshots and can come from different steps. For fields that you know represent
+additive per-step contributions, request sums explicitly, without editing code:
+
+```bash
+uv run trajectory-viewer /path/to/rollouts/train \
+  --sum-metric '*_delta' --sum-metric '*_penalty'
+```
+
+Patterns match the displayed paths (case sensitive); quote them to prevent shell
+expansion. `sum:<path>` entries sum only recorded step metadata, never repeated
+terminal metadata or cumulative event rewards. The last observed values remain
+visible too. For rebench, raw localization/test deltas are **unweighted**; these
+sums are diagnostics and should not be expected to equal the training reward.
+
+The summary counts groups whose expected rollouts have all finished. Use
+`--group-size N` to set the expected count (default: 8). Missing or unfinished
+rollouts do not count as complete. Total and metadata averages use every finished
+rollout with a finite numeric total, including zeroes. A missing metric contributes
+zero, preserving the original viewer's averaging convention; `present n/N` shows
+coverage so missing data can be distinguished from observed zeroes. Fields absent
+from all rollouts are not fabricated.
+
+The orange summary scrolls independently so newly discovered metrics cannot push
+the rollout list off screen. File rows preview four metrics; opening a trajectory
+shows all of them. Press `i` in the detail view to toggle full reward-info JSON,
+including text diagnostics and patch hashes.
 
 ## Run
 
@@ -46,6 +68,7 @@ The requested rollout directory is the built-in default. To inspect another run:
 ```bash
 uv run trajectory-viewer /path/to/rollouts/train
 uv run trajectory-viewer /path/to/rollouts/train --step 42
+uv run trajectory-viewer /path/to/rollouts/train/42/events
 uv run trajectory-viewer /path/to/rollouts/train --file /path/to/events_file.jsonl
 ```
 
@@ -56,12 +79,13 @@ refresh interval while rollouts are being written:
 uv run trajectory-viewer /path/to/rollouts/train --refresh-interval 1
 ```
 
-The viewer discovers new training steps and rollout files and re-reads an open
+When opened on a training root, the viewer discovers new training steps and rollout files and re-reads an open
 trajectory as JSONL events are appended. When streaming is following the newest
 step, it automatically advances to each newly created step. Press `s` to pause
 or resume streaming; when launched with `--refresh-interval 0`, `s` starts
 60-second polling.
-Press `u` for a one-time refresh.
+Press `u` for a one-time refresh. Opening a numeric step or its `events/` directory
+limits browsing to that step.
 
 Observations are limited to 500 displayed characters by default:
 
@@ -78,6 +102,7 @@ uv run trajectory-viewer --observation-limit 0  # no truncation
 | `b` / `Escape` | Return from trajectory detail to the file list |
 | `u` | Refresh steps, rollout files, and the open trajectory once |
 | `s` | Toggle live streaming / polling |
+| `i` | Toggle numeric / full JSON reward info in trajectory details |
 | `r` | Open a random trajectory from the selected step |
 | `p` | Paste a filename/path from the selected step |
 | `g` | Jump directly to a training step |
@@ -89,3 +114,6 @@ uv run trajectory-viewer --observation-limit 0  # no truncation
 
 The file-path dialog only opens `.jsonl` files inside the current step's
 `events/` directory. The application never edits rollout data.
+
+Press `t` to collapse or restore the narrow step sidebar. The selection remains
+visible above the table; `[` / `]` and `g` work while the sidebar is hidden.

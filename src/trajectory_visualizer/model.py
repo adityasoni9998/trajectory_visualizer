@@ -31,6 +31,9 @@ class Turn:
     index: int
     actions: list[Action]
     unmatched_observations: list[Observation]
+    reward: float | int | bool | None = None
+    cumulative_reward: float | int | bool | None = None
+    reward_info: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -45,6 +48,7 @@ class Trajectory:
     finish_message: str
     error_message: str
     parse_warnings: list[str] = field(default_factory=list)
+    terminal_reward_info: dict[str, Any] = field(default_factory=dict)
 
     @property
     def action_count(self) -> int:

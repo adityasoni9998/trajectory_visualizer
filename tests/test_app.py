@@ -66,7 +66,7 @@ def test_all_reward_averages_use_finished_numeric_reward_denominator(
     components = _average_reward_components(rows)
     assert components["binary_reward"] == pytest.approx(1 / 3)
     assert components["str_replace_reward"] == pytest.approx(0.2)
-    assert components["localization_reward"] == pytest.approx(0.0)
+    assert "localization_reward" not in components
 
 
 @pytest.mark.asyncio
@@ -262,58 +262,37 @@ async def test_group_separator_shows_average_total_reward(tmp_path: Path) -> Non
         )
 
         assert "ALL FILES AVG  0.50" in reward_summary
-        assert "UNIT TESTS  0.50" in reward_summary
-        assert "binary 0.500" in reward_summary
-        assert "f2p pass 0.500" in reward_summary
-        assert "p2p fail 0.500" in reward_summary
-        assert "LOCALIZATION  0.50" in reward_summary
-        assert "file f1 0.500" in reward_summary
-        assert "function f1 0.500" in reward_summary
-        assert "module f1 0.500" in reward_summary
-        assert "TOOL FORMAT  0.20" in reward_summary
-        assert "str replace 0.500" in reward_summary
-        assert "agent error 1.000" in reward_summary
+        for name in ("composite_reward", "binary_reward", "localization_reward",
+                     "file_f1_reward", "entity_f1_reward", "module_f1_reward",
+                     "f2p_pass_fraction", "p2p_fail_fraction"):
+            assert f"{name}  0.500  (present 2/2)" in reward_summary
+        assert "tool_json_error_reward  1.000" in reward_summary
+        assert "tool_format_reward  0.200" in reward_summary
         assert "avg total 0.50" in separator
-        assert "UNIT TESTS 0.50" in separator
-        assert "binary 0.500" in separator
-        assert "f2p pass 0.500" in separator
-        assert "p2p fail 0.500" in separator
-        assert "LOCALIZATION 0.50" in separator
-        assert "file f1 0.500" in separator
-        assert "function f1 0.500" in separator
-        assert "module f1 0.500" in separator
-        assert "TOOL FORMAT 0.20" in separator
-        assert "str replace 0.500" in separator
-        assert "agent error 1.000" in separator
-        assert "evaluation logs" not in separator
+        assert "composite_reward 0.500" in separator
+        assert "evaluation_logs" not in separator
         assert "0.75" in highest_reward_row
-        assert "UNIT TESTS 0.75" in highest_reward_row
-        assert "LOCALIZATION 0.75" in highest_reward_row
-        assert "TOOL FORMAT 0.20" in highest_reward_row
-        assert "JSON formatting 1.000" in reward_summary
-        assert "JSON formatting" not in highest_reward_row
-        assert "str replace" not in highest_reward_row
-        assert "agent error" not in highest_reward_row
+        assert "composite_reward 0.750" in highest_reward_row
+        assert "+8 more (open trajectory)" in highest_reward_row
         assert table.rows[table.coordinate_to_cell_key((1, 0)).row_key].height == 1
         assert table.rows[table.coordinate_to_cell_key((0, 0)).row_key].height == 1
-        # All five summary lines must fit inside the border, including tools.
-        assert app.query_one("#reward-summary", Static).content_size.height >= 5
-        assert "binary" not in highest_reward_row
+        assert app.query_one("#reward-summary-scroll").size.height <= 12
+        assert table.size.height > 0
 
         await pilot.press("enter")
         await pilot.pause()
         timeline = app.query_one("#timeline", RichLog)
         detail = "\n".join(line.text for line in timeline.lines)
-
         assert "TOTAL REWARD" in detail
-        assert "UNIT TESTS" in detail
-        assert "BINARY" in detail
-        assert "F2P PASS" in detail
-        assert "P2P FAIL" in detail
+        assert "f2p_pass_fraction" in detail
+        assert "tool_json_error_reward" in detail
         assert "0.250" in detail
-        assert "MIXED" not in separator
-        assert "ALL 0" not in separator
-        assert "ALL 1" not in separator
+        assert "evaluation_logs" not in detail
+        await pilot.press("i")
+        await pilot.pause()
+        detail = "\n".join(line.text for line in timeline.lines)
+        assert "evaluation_logs" in detail
+
 
 
 def test_refresh_interval_defaults_to_one_minute() -> None:
@@ -567,8 +546,9 @@ def test_json_tool_reward_in_summary_and_detail():
     summary = _all_files_reward_text([(Path('sample.jsonl'), (0, '', 1, 'sample', components, True))]).plain
     detail = _format_reward_components(components)
     for text in (summary, detail):
-        assert "JSON formatting 1.000" in text
-        assert "file f1 1.000" in text
-        assert "function f1 0.000" in text
-        assert "module f1 0.500" in text
-    assert components['tool_format_reward'] == 0.5
+        normalized = " ".join(text.split())
+        assert "tool_json_error_reward 1.000" in normalized
+        assert "localization/file_f1_reward 1.000" in normalized
+        assert "localization/entity_f1_reward 0.000" in normalized
+        assert "localization/module_f1_reward 0.500" in normalized
+    assert "tool_format_reward" not in components

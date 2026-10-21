@@ -1,40 +1,44 @@
 from __future__ import annotations
 
 import json
+import math
 import shlex
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any, Iterable
 
 from .model import Action, Observation, Trajectory, Turn
 
 
-REWARD_COMPONENT_FIELDS = {
-    "f2p_pass_fraction",
-    "p2p_fail_fraction",
-    "p2p_pass_fraction",
-}
-
-
 def _reward_components(reward_misc: dict[str, Any]) -> dict[str, float]:
-    """Normalize flat legacy metrics and nested rebench diagnostics."""
-    localization = reward_misc.get("localization")
-    values = dict(localization) if isinstance(localization, dict) else {}
-    values.update(reward_misc)  # Explicit top-level metrics take precedence.
-    components = {
-        str(name): float(value)
-        for name, value in values.items()
-        if (str(name).endswith("_reward") or name in REWARD_COMPONENT_FIELDS)
-        and isinstance(value, (int, float, bool))
-    }
-    # Rebench logs three equally weighted tool components, but no aggregate.
-    tool_values = [
-        components.get("tool_json_error_reward"),
-        components.get("agent_error_event_reward", components.get("agent_error_reward")),
-        components.get("str_replace_reward", components.get("file_editor_reward")),
-    ]
-    if "tool_format_reward" not in components and all(v is not None for v in tool_values):
-        components["tool_format_reward"] = sum(tool_values) / 3
+    """Discover finite numeric leaves without interpreting plugin-specific names.
+
+    Paths use / separators with JSON Pointer escaping (~0 for ~, ~1 for /).
+    Booleans, arrays and text remain available in the raw reward info.
+    """
+    components: dict[str, float] = {}
+
+    def visit(value: Any, path: str) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                key = str(key).replace("~", "~0").replace("/", "~1")
+                visit(child, f"{path}/{key}" if path else key)
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            try:
+                number = float(value)
+            except OverflowError:
+                return
+            if math.isfinite(number):
+                components[path] = number
+
+    visit(reward_misc, "")
     return components
+
+
+def _event_list(value: Any, key: str) -> list[dict[str, Any]]:
+    if isinstance(value, dict):
+        value = value.get(key)
+    return [event for event in value if isinstance(event, dict)] if isinstance(value, list) else []
 
 
 class TrajectoryParseError(ValueError):
@@ -44,6 +48,10 @@ class TrajectoryParseError(ValueError):
 def training_steps(root: Path) -> list[Path]:
     if not root.is_dir():
         raise FileNotFoundError(f"Rollout root does not exist: {root}")
+    if root.name == "events" and root.parent.name.isdigit():
+        return [root.parent]
+    if root.name.isdigit() and (root / "events").is_dir():
+        return [root]
     steps = [
         child
         for child in root.iterdir()
@@ -243,12 +251,14 @@ def _pair_events(
     return actions, unmatched
 
 
-def load_trajectory(path: Path) -> Trajectory:
+def load_trajectory(path: Path, *, sum_metrics: tuple[str, ...] = ()) -> Trajectory:
     task = ""
     trajectory_id = ""
     turns: list[Turn] = []
     reward: float | int | bool | None = None
     reward_components: dict[str, float] = {}
+    component_sums: dict[str, float] = {}
+    terminal_reward_info: dict[str, Any] = {}
     is_finished = False
     finish_message = ""
     error_message = ""
@@ -269,6 +279,9 @@ def load_trajectory(path: Path) -> Trajectory:
                 warnings.append(f"line {line_number}: invalid JSON ({exc.msg})")
                 continue
 
+            if not isinstance(event, dict):
+                warnings.append(f"line {line_number}: expected an event object")
+                continue
             event_type = event.get("type")
             trajectory_id = str(event.get("trajectory_id") or trajectory_id)
             if event_type == "trajectory_created":
@@ -283,9 +296,15 @@ def load_trajectory(path: Path) -> Trajectory:
                 )
             elif event_type == "trajectory_step_added":
                 step = event.get("step") or {}
+                if not isinstance(step, dict):
+                    warnings.append(f"line {line_number}: expected a step object")
+                    continue
+                misc = step.get("misc")
+                reward_misc = misc.get("reward_misc") if isinstance(misc, dict) else None
+                reward_misc = reward_misc if isinstance(reward_misc, dict) else {}
                 actions, unmatched = _pair_events(
-                    step.get("action_events") or [],
-                    step.get("observation_events") or [],
+                    _event_list(step.get("action_events"), "action_events"),
+                    _event_list(step.get("observation_events"), "observation_events"),
                 )
                 # Step zero often contains only the initial environment prompt.
                 # It remains visible because it is still part of what the agent saw.
@@ -294,15 +313,21 @@ def load_trajectory(path: Path) -> Trajectory:
                         index=int(event.get("step_index", len(turns))),
                         actions=actions,
                         unmatched_observations=unmatched,
+                        reward=step.get("reward"),
+                        cumulative_reward=event.get("reward"),
+                        reward_info=reward_misc,
                     )
                 )
                 if event.get("reward") is not None:
                     reward = event["reward"]
-                reward_misc = (step.get("misc") or {}).get("reward_misc") or {}
-                if isinstance(reward_misc, dict):
-                    components = _reward_components(reward_misc)
-                    if components:
-                        reward_components = components
+                components = _reward_components(reward_misc)
+                # Sparse diagnostics retain their last observed value. Only explicitly
+                # selected metrics are summed, once per recorded step, never from the
+                # cumulative event reward or repeated trajectory_finished metadata.
+                reward_components.update(components)
+                for name, value in components.items():
+                    if any(fnmatchcase(name, pattern) for pattern in sum_metrics):
+                        component_sums[name] = component_sums.get(name, 0.0) + value
                 finish_message = str(event.get("finish_message") or finish_message)
                 error_message = str(event.get("error_message") or error_message)
             elif event_type == "trajectory_finished":
@@ -310,12 +335,16 @@ def load_trajectory(path: Path) -> Trajectory:
                 reward = event.get("reward", reward)
                 reward_misc = event.get("reward_misc") or {}
                 if isinstance(reward_misc, dict):
+                    terminal_reward_info.update(reward_misc)
                     reward_components.update(_reward_components(reward_misc))
                 finish_message = str(event.get("finish_message") or finish_message)
                 error_message = str(event.get("error_message") or error_message)
 
     if not trajectory_id and not turns:
         raise TrajectoryParseError(f"No trajectory events found in {path}")
+    for name, value in component_sums.items():
+        # Keep latest diagnostics too; the prefix makes temporal aggregation explicit.
+        reward_components[f"sum:{name}"] = value
     return Trajectory(
         path=path,
         trajectory_id=trajectory_id,
@@ -327,6 +356,7 @@ def load_trajectory(path: Path) -> Trajectory:
         finish_message=finish_message,
         error_message=error_message,
         parse_warnings=warnings,
+        terminal_reward_info=terminal_reward_info,
     )
 
 
