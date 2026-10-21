@@ -1,7 +1,7 @@
 [project]
 name = "trajectory-visualizer"
 version = "0.1.0"
-description = "A focused Textual TUI for inspecting agent rollout trajectories."
+description = "Terminal and browser viewers for inspecting agent rollout trajectories."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -10,11 +10,15 @@ dependencies = [
 
 [project.scripts]
 trajectory-viewer = "trajectory_visualizer.app:main"
+trajectory-viewer-web = "trajectory_visualizer.web:main"
 
 [dependency-groups]
 dev = [
     "pytest>=8.4.0",
     "pytest-asyncio>=1.1.0",
+]
+browser = [
+    "playwright>=1.50.0",
 ]
 
 [build-system]

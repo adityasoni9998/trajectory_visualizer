@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Trajectory — rollout explorer</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-icon" aria-hidden="true">↗</span
+        ><strong>Trajectory</strong
+        ><span class="brand-sub">ROLLOUT EXPLORER</span>
+      </div>
+      <div class="toolbar">
+        <label class="live"
+          ><input id="live" type="checkbox" /> Live refresh</label
+        ><button id="refresh" class="button">↻ Refresh</button>
+      </div>
+    </header>
+    <div class="workspace">
+      <aside class="steps-sidebar" aria-label="Training steps">
+        <div class="sidebar-heading">
+          <span class="eyebrow">TRAINING</span>
+          <h2>Steps <span id="step-count" class="muted"></span></h2>
+        </div>
+        <nav id="steps" aria-label="Select training step"></nav>
+        <div class="sidebar-foot">
+          <span class="status-dot"></span> Local · read only
+          <div id="root" title="Rollout directory"></div>
+        </div>
+      </aside>
+      <aside class="rollouts-sidebar" aria-label="Tasks and rollouts">
+        <div class="rollouts-heading">
+          <span class="eyebrow">ROLLOUTS</span>
+          <h2 id="step-title">Loading steps…</h2>
+          <div id="run-stats" class="run-stats"></div>
+          <label class="search-label"
+            ><span class="sr-only">Search tasks or rollout files</span
+            ><input
+              id="search"
+              type="search"
+              placeholder="Search task ID or file…"
+          /></label>
+          <div class="list-controls">
+            <span id="task-count" class="muted"></span
+            ><label
+              ><span class="sr-only">Sort tasks</span
+              ><select id="sort">
+                <option value="reward">Highest reward</option>
+                <option value="task">Task ID</option>
+              </select></label
+            >
+          </div>
+        </div>
+        <div id="groups" class="groups"></div>
+      </aside>
+      <main id="main" tabindex="-1">
+        <div id="status" role="status" aria-live="polite"></div>
+        <div id="trajectory" class="trajectory">
+          <div class="empty-state">
+            <span class="empty-mark">↗</span>
+            <h1>Your rollouts, turn by turn.</h1>
+            <p>
+              Select a training step and a rollout to inspect its rewards,
+              actions, and observations.
+            </p>
+          </div>
+        </div>
+      </main>
+    </div>
+  </body>
+</html>

@@ -49,6 +49,7 @@ class Trajectory:
     error_message: str
     parse_warnings: list[str] = field(default_factory=list)
     terminal_reward_info: dict[str, Any] = field(default_factory=dict)
+    task_id: str = ""
 
     @property
     def action_count(self) -> int:

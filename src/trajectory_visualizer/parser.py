@@ -103,6 +103,8 @@ def _text_parts(value: Any) -> str:
         content = value.get("content")
         if content is not None:
             return _text_parts(content)
+        if "text" in value:
+            return _text_parts(value["text"])
         return json.dumps(value, indent=2, ensure_ascii=False)
     return str(value)
 
@@ -115,17 +117,25 @@ def _observation(event: dict[str, Any]) -> Observation:
         text = _text_parts(body)
     if not text:
         text = _text_parts(
-            event.get("error") or event.get("message") or event.get("content")
+            event.get("error") or event.get("message") or event.get("content") or event.get("detail")
         )
+    if not text:
+        text = _text_parts(event.get("system_prompt") or event.get("llm_message"))
+    message = event.get("llm_message")
+    role = message.get("role") if isinstance(message, dict) else None
+    if event.get("kind") == "SystemPromptEvent":
+        role = "system"
+    if event.get("kind") == "ConversationErrorEvent":
+        role = event.get("code") or "conversation error"
     return Observation(
         tool_call_id=event.get("tool_call_id"),
-        tool_name=str(event.get("tool_name") or "environment"),
+        tool_name=str(event.get("tool_name") or role or "environment"),
         text=text,
         is_error=bool(
             body.get("is_error")
             or event.get("is_error")
             or event.get("error")
-            or event.get("kind") == "AgentErrorEvent"
+            or event.get("kind") in {"AgentErrorEvent", "ConversationErrorEvent"}
         ),
         raw=event,
     )
@@ -253,6 +263,7 @@ def _pair_events(
 
 def load_trajectory(path: Path, *, sum_metrics: tuple[str, ...] = ()) -> Trajectory:
     task = ""
+    task_id = ""
     trajectory_id = ""
     turns: list[Turn] = []
     reward: float | int | bool | None = None
@@ -289,6 +300,8 @@ def load_trajectory(path: Path, *, sum_metrics: tuple[str, ...] = ()) -> Traject
                 trajectory_id = str(trajectory.get("id") or trajectory_id)
             elif event_type == "trajectory_task_set":
                 task_data = event.get("task")
+                if isinstance(task_data, dict) and task_data.get("id") is not None:
+                    task_id = str(task_data["id"])
                 task = (
                     str(task_data.get("goal") or task_data.get("description") or "")
                     if isinstance(task_data, dict)
@@ -357,6 +370,7 @@ def load_trajectory(path: Path, *, sum_metrics: tuple[str, ...] = ()) -> Traject
         error_message=error_message,
         parse_warnings=warnings,
         terminal_reward_info=terminal_reward_info,
+        task_id=task_id,
     )
 
 
